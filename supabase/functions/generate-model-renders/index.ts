@@ -5,16 +5,16 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
-const AI_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!
+const GEMINI_MODEL = 'gemini-2.0-flash-exp'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Nano Banana (google/gemini-2.5-flash-image) for image generation
-const MODEL = 'google/gemini-2.5-flash-image'
+// Using Gemini 2.0 Flash for model image generation
+
 
 interface RequestBody {
   enhanced_image_url: string
@@ -63,75 +63,48 @@ async function generateModelImage(
 ): Promise<{ image_base64: string }> {
   const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. The model should be wearing the exact jewelry shown in the reference image. Generate a photorealistic fashion photograph.`
 
-  const response = await fetch(AI_GATEWAY_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      modalities: ['image', 'text'],
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: fullPrompt,
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/png;base64,${enhancedImageBase64}`,
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: fullPrompt },
+              {
+                inline_data: {
+                  mime_type: 'image/png',
+                  data: enhancedImageBase64,
+                },
               },
-            },
-          ],
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ['TEXT', 'IMAGE'],
         },
-      ],
-    }),
-  })
+      }),
+    }
+  )
 
-  if (response.status === 429) {
-    throw new Error('Rate limited — please try again later')
-  }
-  if (response.status === 402) {
-    throw new Error('AI credits exhausted — please add funds')
-  }
+  if (response.status === 429) throw new Error('Rate limited — please try again later')
   if (!response.ok) {
     const errText = await response.text()
-    throw new Error(`AI Gateway error ${response.status}: ${errText}`)
+    throw new Error(`Gemini API error ${response.status}: ${errText}`)
   }
 
   const result = await response.json()
-  console.log('AI response keys:', JSON.stringify(Object.keys(result)))
-  
-  const content = result.choices?.[0]?.message?.content
-  const images = result.choices?.[0]?.message?.images
+  const parts = result.candidates?.[0]?.content?.parts || []
 
-  // Check images array format (Lovable AI gateway format)
-  if (Array.isArray(images) && images.length > 0) {
-    const imgUrl = images[0]?.image_url?.url
-    if (imgUrl) {
-      const dataMatch = imgUrl.match(/^data:[^;]+;base64,(.+)$/)
-      if (dataMatch) return { image_base64: dataMatch[1] }
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return { image_base64: part.inlineData.data }
     }
   }
 
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part.type === 'image_url' && part.image_url?.url) {
-        const dataMatch = part.image_url.url.match(/^data:[^;]+;base64,(.+)$/)
-        if (dataMatch) return { image_base64: dataMatch[1] }
-      }
-      if (part.inline_data?.data) {
-        return { image_base64: part.inline_data.data }
-      }
-    }
-  }
-
-  // If content is a string, the model didn't generate an image
-  console.error('No image in response. Content type:', typeof content, 'Content preview:', JSON.stringify(content)?.slice(0, 200))
+  console.error('No image in Gemini response:', JSON.stringify(result).slice(0, 300))
   throw new Error('AI model did not return an image')
 }
 

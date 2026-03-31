@@ -5,16 +5,16 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
-const AI_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!
+const GEMINI_MODEL = 'gemini-2.0-flash-exp' // supports image generation
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Nano Banana 2 (google/gemini-3.1-flash-image-preview) for image editing/enhancement
-const MODEL = 'google/gemini-3.1-flash-image-preview'
+// Using Gemini 2.0 Flash for image enhancement
+
 
 interface RequestBody {
   image_url: string
@@ -42,74 +42,51 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
 async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }> {
   const imageBase64 = await fetchImageAsBase64(imageUrl)
 
-  const response = await fetch(AI_GATEWAY_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      modalities: ['image', 'text'],
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.',
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/jpeg;base64,${imageBase64}`,
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.',
               },
-            },
-          ],
+              {
+                inline_data: {
+                  mime_type: 'image/png',
+                  data: imageBase64,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ['TEXT', 'IMAGE'],
         },
-      ],
-    }),
-  })
+      }),
+    }
+  )
 
-  if (response.status === 429) {
-    throw new Error('Rate limited — please try again later')
-  }
-  if (response.status === 402) {
-    throw new Error('AI credits exhausted — please add funds')
-  }
+  if (response.status === 429) throw new Error('Rate limited — please try again later')
   if (!response.ok) {
     const errText = await response.text()
-    throw new Error(`AI Gateway error ${response.status}: ${errText}`)
+    throw new Error(`Gemini API error ${response.status}: ${errText}`)
   }
 
   const result = await response.json()
-  
-  const content = result.choices?.[0]?.message?.content
-  const images = result.choices?.[0]?.message?.images
+  const parts = result.candidates?.[0]?.content?.parts || []
 
-  // Check images array format (Lovable AI gateway format)
-  if (Array.isArray(images) && images.length > 0) {
-    const imgUrl = images[0]?.image_url?.url
-    if (imgUrl) {
-      const dataMatch = imgUrl.match(/^data:[^;]+;base64,(.+)$/)
-      if (dataMatch) return { image_base64: dataMatch[1] }
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return { image_base64: part.inlineData.data }
     }
   }
-  
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part.type === 'image_url' && part.image_url?.url) {
-        const dataMatch = part.image_url.url.match(/^data:[^;]+;base64,(.+)$/)
-        if (dataMatch) return { image_base64: dataMatch[1] }
-      }
-      if (part.inline_data?.data) {
-        return { image_base64: part.inline_data.data }
-      }
-    }
-  }
-  
-  // If the model returns text-only (no image generation), use original as fallback
-  console.warn('AI did not return an image, using original image as enhanced version')
+
+  // Fallback: return original image if no image generated
+  console.warn('Gemini did not return an image, using original as fallback')
   return { image_base64: imageBase64 }
 }
 

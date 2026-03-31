@@ -31,6 +31,7 @@ const App = () => (
             <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
               <Route index element={<DashboardHome />} />
               <Route path="projects" element={<DashboardProjects />} />
+              <Route path="settings" element={<DashboardSettings />} />
             </Route>
             <Route path="/project/:id" element={<ProtectedRoute><Project /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />

@@ -236,6 +236,9 @@ Deno.serve(async (req) => {
 
       await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', job.id)
 
+      // Track usage
+      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'zoom_shots_generated' })
+
       return new Response(
         JSON.stringify({ success: true, zoom_urls: generatedUrls }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

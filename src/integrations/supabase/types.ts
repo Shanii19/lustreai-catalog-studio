@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      monthly_usage: {
+        Row: {
+          created_at: string
+          id: string
+          images_enhanced: number
+          models_generated: number
+          month: string
+          updated_at: string
+          user_id: string
+          zoom_shots_generated: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          images_enhanced?: number
+          models_generated?: number
+          month: string
+          updated_at?: string
+          user_id: string
+          zoom_shots_generated?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          images_enhanced?: number
+          models_generated?: number
+          month?: string
+          updated_at?: string
+          user_id?: string
+          zoom_shots_generated?: number
+        }
+        Relationships: []
+      }
       processing_jobs: {
         Row: {
           created_at: string
@@ -151,12 +184,45 @@ export type Database = {
         }
         Relationships: []
       }
+      user_api_keys: {
+        Row: {
+          created_at: string
+          encrypted_key: string
+          id: string
+          is_active: boolean
+          key_type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_key: string
+          id?: string
+          is_active?: boolean
+          key_type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_key?: string
+          id?: string
+          is_active?: boolean
+          key_type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      increment_usage: {
+        Args: { p_field: string; p_user_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       image_type: "original" | "enhanced" | "model" | "zoom"

@@ -11,6 +11,7 @@ import Signup from "./pages/Signup";
 import DashboardLayout from "./components/DashboardLayout";
 import DashboardHome from "./pages/DashboardHome";
 import DashboardProjects from "./pages/DashboardProjects";
+import DashboardSettings from "./pages/DashboardSettings";
 import Project from "./pages/Project";
 import NotFound from "./pages/NotFound";
 
@@ -30,6 +31,7 @@ const App = () => (
             <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
               <Route index element={<DashboardHome />} />
               <Route path="projects" element={<DashboardProjects />} />
+              <Route path="settings" element={<DashboardSettings />} />
             </Route>
             <Route path="/project/:id" element={<ProtectedRoute><Project /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />

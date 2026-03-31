@@ -150,7 +150,7 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
                       {v.done ? (
                         <div className="group relative">
-                          <img src={v.url} alt={`Model variant ${vi + 1}`} className="w-full h-56 object-cover" />
+                          <img src={v.url} alt={`Model variant ${vi + 1}`} className="w-full h-56 object-cover image-hover" loading="lazy" />
                           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/70 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button size="sm" className="gap-1.5 gold-glow-hover" onClick={() => handleSelect(img.id, v.id)}>
                               <Check className="h-3.5 w-3.5" /> Select

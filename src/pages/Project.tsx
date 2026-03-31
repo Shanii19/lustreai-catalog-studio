@@ -12,6 +12,8 @@ import { useProcessingStatus } from "@/hooks/useProcessingStatus";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { enhanceAllImages } from "@/services/enhancementService";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {
   1: "enhance",

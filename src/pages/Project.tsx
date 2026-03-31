@@ -4,6 +4,7 @@ import DashboardSidebar from "@/components/DashboardSidebar";
 import StageProgressBar from "@/components/StageProgressBar";
 import UploadStage from "@/components/UploadStage";
 import EnhanceStage from "@/components/EnhanceStage";
+import ModelRenderStage from "@/components/ModelRenderStage";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 

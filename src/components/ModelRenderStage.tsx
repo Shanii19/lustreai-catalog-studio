@@ -34,7 +34,76 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
   const hasRealJobs = jobs.length > 0;
 
-  // Initialize model generation mock
+  // Populate models from real jobs — fetch generated model images from DB
+  useEffect(() => {
+    if (!hasRealJobs) return;
+    // For each image, build 3 variant slots based on job progress
+    const updated: Record<string, ModelVariant[]> = {};
+    images.forEach((img) => {
+      const job = jobs.find((j) => j.image_id === img.id && j.job_type === "model_render");
+      const progress = job?.progress ?? 0;
+      const isDone = job?.status === "complete";
+      updated[img.id] = [0, 1, 2].map((vi) => {
+        // Each variant progresses through the job: variant i is "done" when progress > (i+1)/3 * 100
+        const variantThreshold = ((vi + 1) / 3) * 100;
+        const variantDone = isDone || progress >= variantThreshold;
+        const variantProgress = isDone ? 100 : Math.min(Math.round((progress / variantThreshold) * 100), variantDone ? 100 : 99);
+        return {
+          id: `${img.id}-model-${vi}`,
+          url: variantDone ? "" : "", // will be filled from project_images
+          progress: variantProgress,
+          done: variantDone,
+        };
+      });
+    });
+    setModels(updated);
+  }, [images, jobs, hasRealJobs]);
+
+  // Fetch actual model image URLs from project_images when jobs complete
+  useEffect(() => {
+    if (!hasRealJobs) return;
+    const completedImageIds = images
+      .filter((img) => {
+        const job = jobs.find((j) => j.image_id === img.id && j.job_type === "model_render" && j.status === "complete");
+        return !!job;
+      })
+      .map((img) => img.id);
+
+    if (completedImageIds.length === 0) return;
+
+    // Fetch model images from project_images table
+    import("@/integrations/supabase/client").then(({ supabase }) => {
+      // Get the project_id from the first job
+      const projectId = jobs[0]?.project_id;
+      if (!projectId) return;
+      supabase
+        .from("project_images")
+        .select("id, storage_url, metadata")
+        .eq("project_id", projectId)
+        .eq("type", "model")
+        .then(({ data }) => {
+          if (!data) return;
+          setModels((prev) => {
+            const next = { ...prev };
+            completedImageIds.forEach((imageId) => {
+              const imgModels = data.filter((d: any) => d.metadata?.jewelry_image_id === imageId);
+              if (imgModels.length > 0 && next[imageId]) {
+                const variants = [...next[imageId]];
+                imgModels.forEach((m: any, idx: number) => {
+                  if (idx < variants.length) {
+                    variants[idx] = { ...variants[idx], url: m.storage_url, done: true, progress: 100 };
+                  }
+                });
+                next[imageId] = variants;
+              }
+            });
+            return next;
+          });
+        });
+    });
+  }, [images, jobs, hasRealJobs]);
+
+  // Initialize model generation mock (no real jobs)
   useEffect(() => {
     if (hasRealJobs) return;
     const initial: Record<string, ModelVariant[]> = {};

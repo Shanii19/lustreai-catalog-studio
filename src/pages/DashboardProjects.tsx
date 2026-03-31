@@ -86,7 +86,7 @@ const DashboardProjects = () => {
         </Button>
       </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6 space-y-6 fade-in-up">
+      <div className="flex-1 overflow-auto px-6 py-6 space-y-6 page-enter">
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">

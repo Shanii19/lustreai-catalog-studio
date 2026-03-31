@@ -19,7 +19,7 @@ const statusColor: Record<string, string> = {
 const DashboardHome = () => {
   const { openNewProject } = useOutletContext<{ openNewProject: () => void }>();
   const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectWithThumb[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,8 +30,21 @@ const DashboardHome = () => {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(6)
-      .then(({ data }) => {
-        setProjects(data ?? []);
+      .then(async ({ data }) => {
+        const projs: ProjectWithThumb[] = data ?? [];
+        // Fetch first image for each project as thumbnail
+        for (const p of projs) {
+          const { data: imgs } = await supabase
+            .from("project_images")
+            .select("storage_url")
+            .eq("project_id", p.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (imgs && imgs.length > 0) {
+            p.thumbnail = imgs[0].storage_url;
+          }
+        }
+        setProjects(projs);
         setLoading(false);
       });
   }, [user]);

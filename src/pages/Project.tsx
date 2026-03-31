@@ -86,10 +86,23 @@ const Project = () => {
             onComplete={() => setStage(3)}
           />
         )}
-        {stage === 3 && (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-muted-foreground font-heading">Export — coming soon</p>
-          </div>
+        {stage === 3 && !showComplete && (
+          <ZoomExportStage
+            images={uploadedImages}
+            onComplete={async () => {
+              // Update project status to complete
+              if (id) {
+                await supabase.from("projects").update({ status: "complete" }).eq("id", id);
+              }
+              setShowComplete(true);
+            }}
+          />
+        )}
+        {showComplete && (
+          <ProjectComplete
+            imageCount={uploadedImages.length * 4}
+            projectName={projectName}
+          />
         )}
       </main>
     </div>

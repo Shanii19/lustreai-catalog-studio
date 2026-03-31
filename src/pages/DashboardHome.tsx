@@ -65,7 +65,7 @@ const DashboardHome = () => {
         </Button>
       </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6 space-y-8 fade-in-up">
+      <div className="flex-1 overflow-auto px-6 py-6 space-y-8 page-enter">
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {stats.map((s) => (

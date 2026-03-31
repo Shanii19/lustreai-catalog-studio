@@ -8,7 +8,9 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
-import Dashboard from "./pages/Dashboard";
+import DashboardLayout from "./components/DashboardLayout";
+import DashboardHome from "./pages/DashboardHome";
+import DashboardProjects from "./pages/DashboardProjects";
 import Project from "./pages/Project";
 import NotFound from "./pages/NotFound";
 
@@ -25,7 +27,10 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
+              <Route index element={<DashboardHome />} />
+              <Route path="projects" element={<DashboardProjects />} />
+            </Route>
             <Route path="/project/:id" element={<ProtectedRoute><Project /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

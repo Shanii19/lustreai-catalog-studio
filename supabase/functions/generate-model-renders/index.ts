@@ -226,6 +226,9 @@ Deno.serve(async (req) => {
 
       await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', job.id)
 
+      // Track usage — count each variant as a model generated
+      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'models_generated' })
+
       return new Response(
         JSON.stringify({ success: true, model_urls: generatedUrls }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

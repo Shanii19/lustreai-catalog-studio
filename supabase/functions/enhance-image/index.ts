@@ -192,6 +192,9 @@ Deno.serve(async (req) => {
         progress: 100,
       }).eq('id', job.id)
 
+      // Track usage
+      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'images_enhanced' })
+
       return new Response(
         JSON.stringify({ success: true, enhanced_url: publicUrlData.publicUrl }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -13,8 +13,8 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Nano Banana Pro for highest quality zoom shots
-const MODEL = 'google/gemini-3-pro-image-preview'
+// Using Gemini 2.0 Flash for zoom shot generation
+
 
 interface RequestBody {
   model_image_url: string

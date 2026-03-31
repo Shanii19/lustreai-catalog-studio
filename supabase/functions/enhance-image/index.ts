@@ -5,8 +5,8 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
-const AI_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!
+const GEMINI_MODEL = 'gemini-2.0-flash-exp' // supports image generation
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 

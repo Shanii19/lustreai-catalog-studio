@@ -78,9 +78,10 @@ const Project = () => {
           />
         )}
         {stage === 2 && (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-muted-foreground font-heading">Model Rendering — coming soon</p>
-          </div>
+          <ModelRenderStage
+            images={uploadedImages}
+            onComplete={() => setStage(3)}
+          />
         )}
         {stage === 3 && (
           <div className="flex-1 flex items-center justify-center">

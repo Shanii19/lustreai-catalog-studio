@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Project = Tables<"projects">;
+type ProjectWithThumb = Project & { thumbnail?: string };
 
 const statusColor: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",

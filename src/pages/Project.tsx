@@ -14,6 +14,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { enhanceAllImages } from "@/services/enhancementService";
 import { generateAllModelRenders } from "@/services/modelRenderService";
+import { generateAllZoomShots } from "@/services/zoomGenerationService";
 import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {
@@ -132,7 +133,16 @@ const Project = () => {
         {stage === 2 && (
           <ModelRenderStage
             images={uploadedImages}
-            onComplete={() => { toast.success("Model rendering complete"); setStage(3); }}
+            onComplete={() => {
+              toast.success("Model rendering complete — starting 4K zoom generation");
+              setStage(3);
+              if (user && id) {
+                generateAllZoomShots(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
+                  if (failed > 0) toast.error(`${failed} zoom generation(s) failed`);
+                  if (succeeded > 0) toast.success(`${succeeded} zoom set(s) generated`);
+                });
+              }
+            }}
             jobs={getJobsByType("model_render")}
             onRetry={(imageId) => handleRetry(imageId, "model_render")}
           />

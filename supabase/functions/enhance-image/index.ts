@@ -10,8 +10,8 @@ const GEMINI_MODEL = 'gemini-2.5-flash-image'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 2
-const RETRY_DELAY_MS = 2000
+const MAX_RETRIES = 4
+const RETRY_DELAYS = [10000, 30000, 60000, 60000] // exponential backoff: 10s, 30s, 60s, 60s
 
 interface RequestBody {
   image_url: string
@@ -82,8 +82,9 @@ async function enhanceWithRetry(imageUrl: string, retries = MAX_RETRIES): Promis
       return await enhanceWithAI(imageUrl)
     } catch (error) {
       if (attempt < retries) {
-        console.log(`Enhancement attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
-        await sleep(RETRY_DELAY_MS)
+        const delay = RETRY_DELAYS[attempt] || 60000
+        console.log(`Enhancement attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        await sleep(delay)
       } else {
         throw error
       }

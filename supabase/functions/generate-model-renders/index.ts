@@ -10,8 +10,8 @@ const GEMINI_MODEL = 'gemini-2.5-flash-image'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 2
-const RETRY_DELAY_MS = 2000
+const MAX_RETRIES = 4
+const RETRY_DELAYS = [10000, 30000, 60000, 60000]
 
 interface RequestBody {
   enhanced_image_url: string
@@ -98,8 +98,9 @@ async function generateWithRetry(
       return await generateModelImage(imageBase64, promptSuffix)
     } catch (error) {
       if (attempt < retries) {
-        console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
-        await sleep(RETRY_DELAY_MS)
+        const delay = RETRY_DELAYS[attempt] || 60000
+        console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        await sleep(delay)
       } else {
         throw error
       }

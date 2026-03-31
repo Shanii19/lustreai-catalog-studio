@@ -13,6 +13,8 @@ interface UploadedFile {
   uploading: boolean;
   done: boolean;
   dbId?: string;
+  bgRemoving?: boolean;
+  bgDone?: boolean;
 }
 
 interface Props {

@@ -66,6 +66,11 @@
 
   .gold-glow-hover:hover {
     box-shadow: 0 0 25px hsl(37 38% 60% / 0.25), 0 0 50px hsl(37 38% 60% / 0.1);
+    transform: scale(1.02);
+  }
+
+  .gold-glow-hover {
+    @apply transition-all duration-200;
   }
 
   .fade-in {
@@ -74,6 +79,68 @@
 
   .fade-in-up {
     animation: fadeInUp 0.6s ease-out forwards;
+  }
+
+  .image-hover {
+    @apply transition-transform duration-300 ease-out;
+  }
+
+  .image-hover:hover {
+    transform: scale(1.04);
+  }
+
+  /* Staggered card animations */
+  .stagger-card {
+    opacity: 0;
+    animation: fadeInUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .stagger-card:nth-child(1) { animation-delay: 0ms; }
+  .stagger-card:nth-child(2) { animation-delay: 50ms; }
+  .stagger-card:nth-child(3) { animation-delay: 100ms; }
+  .stagger-card:nth-child(4) { animation-delay: 150ms; }
+  .stagger-card:nth-child(5) { animation-delay: 200ms; }
+  .stagger-card:nth-child(6) { animation-delay: 250ms; }
+  .stagger-card:nth-child(7) { animation-delay: 300ms; }
+  .stagger-card:nth-child(8) { animation-delay: 350ms; }
+  .stagger-card:nth-child(9) { animation-delay: 400ms; }
+
+  /* Gold shimmer skeleton */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+    background: hsl(var(--secondary));
+  }
+
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(37 38% 60% / 0.08) 40%,
+      hsl(37 38% 60% / 0.15) 50%,
+      hsl(37 38% 60% / 0.08) 60%,
+      transparent 100%
+    );
+    animation: shimmer 2s infinite;
+  }
+
+  /* Drag-over gold pulse */
+  .drop-zone-active {
+    border-color: hsl(var(--primary)) !important;
+    animation: goldBorderPulse 1s ease-in-out infinite;
+  }
+
+  /* Page transition */
+  .page-enter {
+    animation: pageEnter 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Smooth progress bar */
+  .progress-smooth > div {
+    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
 
@@ -85,4 +152,29 @@
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes goldBorderPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 hsl(37 38% 60% / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px hsl(37 38% 60% / 0.2);
+  }
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

@@ -13,9 +13,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Gemini 2.0 Flash for model image generation
-
-
 interface RequestBody {
   enhanced_image_url: string
   project_id: string
@@ -24,18 +21,9 @@ interface RequestBody {
 }
 
 const VARIANT_PROMPTS = [
-  {
-    variant: 1,
-    suffix: 'close-up portrait, face and neckline visible, soft bokeh background',
-  },
-  {
-    variant: 2,
-    suffix: 'half-body shot, elegant pose, hands visible showcasing the jewelry',
-  },
-  {
-    variant: 3,
-    suffix: 'full editorial fashion shot, full body, runway style, dramatic lighting',
-  },
+  { variant: 1, suffix: 'close-up portrait, face and neckline visible, soft bokeh background' },
+  { variant: 2, suffix: 'half-body shot, elegant pose, hands visible showcasing the jewelry' },
+  { variant: 3, suffix: 'full editorial fashion shot, full body, runway style, dramatic lighting' },
 ]
 
 const BASE_PROMPT =
@@ -69,22 +57,13 @@ async function generateModelImage(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: fullPrompt },
-              {
-                inline_data: {
-                  mime_type: 'image/png',
-                  data: enhancedImageBase64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseModalities: ['TEXT', 'IMAGE'],
-        },
+        contents: [{
+          parts: [
+            { text: fullPrompt },
+            { inline_data: { mime_type: 'image/png', data: enhancedImageBase64 } },
+          ],
+        }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
   )
@@ -97,11 +76,8 @@ async function generateModelImage(
 
   const result = await response.json()
   const parts = result.candidates?.[0]?.content?.parts || []
-
   for (const part of parts) {
-    if (part.inlineData?.data) {
-      return { image_base64: part.inlineData.data }
-    }
+    if (part.inlineData?.data) return { image_base64: part.inlineData.data }
   }
 
   console.error('No image in Gemini response:', JSON.stringify(result).slice(0, 300))
@@ -128,6 +104,57 @@ async function generateWithRetry(
   throw new Error('Model generation failed after all retries')
 }
 
+async function processModelRenders(jobId: string, enhancedImageUrl: string, projectId: string, imageId: string, userId: string) {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  try {
+    const enhancedImageBase64 = await fetchImageAsBase64(enhancedImageUrl)
+
+    for (let i = 0; i < VARIANT_PROMPTS.length; i++) {
+      const { variant, suffix } = VARIANT_PROMPTS[i]
+
+      const progressPct = Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100)
+      await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', jobId)
+
+      const result = await generateWithRetry(enhancedImageBase64, suffix)
+
+      const storagePath = `${userId}/${projectId}/models/${imageId}/variant_${variant}.png`
+      const binaryStr = atob(result.image_base64)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
+      const uploadBlob = new Blob([bytes], { type: 'image/png' })
+
+      const { error: storageError } = await supabase.storage
+        .from('project-images')
+        .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
+
+      if (storageError) throw new Error(`Storage upload failed for variant ${variant}: ${storageError.message}`)
+
+      const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
+
+      await supabase.from('project_images').insert({
+        project_id: projectId,
+        storage_url: publicUrlData.publicUrl,
+        type: 'model',
+        metadata: { variant, jewelry_image_id: imageId },
+      })
+
+      const uploadPct = Math.round(((i * 2 + 2) / (VARIANT_PROMPTS.length * 2)) * 100)
+      await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', jobId)
+
+      if (i < VARIANT_PROMPTS.length - 1) await sleep(1000)
+    }
+
+    await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
+    await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'models_generated' })
+  } catch (error) {
+    await supabase.from('processing_jobs').update({
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unknown error',
+    }).eq('id', jobId)
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -138,7 +165,7 @@ Deno.serve(async (req) => {
 
     if (!enhanced_image_url || !project_id || !image_id || !user_id) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: enhanced_image_url, project_id, image_id, user_id' }),
+        JSON.stringify({ error: 'Missing required fields' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -147,91 +174,23 @@ Deno.serve(async (req) => {
 
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
-      .insert({
-        project_id,
-        image_id,
-        job_type: 'model_render',
-        status: 'processing',
-        progress: 5,
-      })
+      .insert({ project_id, image_id, job_type: 'model_render', status: 'processing', progress: 5 })
       .select()
       .single()
 
     if (jobError) {
       return new Response(
-        JSON.stringify({ error: 'Failed to create processing job', details: jobError.message }),
+        JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Fetch the enhanced image once, reuse for all variants
-    const enhancedImageBase64 = await fetchImageAsBase64(enhanced_image_url)
-    const generatedUrls: string[] = []
+    EdgeRuntime.waitUntil(processModelRenders(job.id, enhanced_image_url, project_id, image_id, user_id))
 
-    try {
-      for (let i = 0; i < VARIANT_PROMPTS.length; i++) {
-        const { variant, suffix } = VARIANT_PROMPTS[i]
-
-        const progressPct = Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100)
-        await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', job.id)
-
-        const result = await generateWithRetry(enhancedImageBase64, suffix)
-
-        const storagePath = `${user_id}/${project_id}/models/${image_id}/variant_${variant}.png`
-
-        const binaryStr = atob(result.image_base64)
-        const bytes = new Uint8Array(binaryStr.length)
-        for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
-        const uploadBlob = new Blob([bytes], { type: 'image/png' })
-
-        const { error: storageError } = await supabase.storage
-          .from('project-images')
-          .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
-
-        if (storageError) {
-          throw new Error(`Storage upload failed for variant ${variant}: ${storageError.message}`)
-        }
-
-        const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
-
-        await supabase.from('project_images').insert({
-          project_id,
-          storage_url: publicUrlData.publicUrl,
-          type: 'model',
-          metadata: { variant, jewelry_image_id: image_id },
-        })
-
-        generatedUrls.push(publicUrlData.publicUrl)
-
-        const uploadPct = Math.round(((i * 2 + 2) / (VARIANT_PROMPTS.length * 2)) * 100)
-        await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', job.id)
-
-        // Add delay between API calls to avoid rate limiting
-        if (i < VARIANT_PROMPTS.length - 1) {
-          await sleep(1000)
-        }
-      }
-
-      await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', job.id)
-
-      // Track usage — count each variant as a model generated
-      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'models_generated' })
-
-      return new Response(
-        JSON.stringify({ success: true, model_urls: generatedUrls }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    } catch (genError) {
-      await supabase.from('processing_jobs').update({
-        status: 'failed',
-        error_message: genError instanceof Error ? genError.message : 'Unknown error',
-      }).eq('id', job.id)
-
-      return new Response(
-        JSON.stringify({ error: 'Model generation failed', details: genError instanceof Error ? genError.message : 'Unknown error' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    return new Response(
+      JSON.stringify({ success: true, job_id: job.id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   } catch (error) {
     return new Response(
       JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),

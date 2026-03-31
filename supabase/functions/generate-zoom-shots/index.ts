@@ -13,11 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Gemini 2.0 Flash for zoom shot generation
-
-
 interface RequestBody {
-  model_image_url: string
   jewelry_image_url: string
   project_id: string
   image_id: string
@@ -25,26 +21,10 @@ interface RequestBody {
 }
 
 const ZOOM_SHOTS = [
-  {
-    angle: 'front',
-    label: 'Front View',
-    prompt: 'Ultra high resolution macro photo of the jewelry from the front, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography',
-  },
-  {
-    angle: 'side',
-    label: 'Side Profile',
-    prompt: 'Ultra high resolution macro photo of the jewelry from side profile angle, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography',
-  },
-  {
-    angle: 'top',
-    label: 'Top-Down',
-    prompt: 'Ultra high resolution macro photo of the jewelry from top-down flat lay angle, 4K, extreme detail, white marble surface, studio lighting, sharp focus on craftsmanship details, professional product photography',
-  },
-  {
-    angle: 'macro',
-    label: 'Macro Detail',
-    prompt: 'Extreme macro close-up of the jewelry craftsmanship detail, 4K, bokeh background, jeweler\'s loupe perspective, ultra sharp focus on gemstone facets and metalwork, professional product photography',
-  },
+  { angle: 'front', prompt: 'Ultra high resolution macro photo of the jewelry from the front, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography' },
+  { angle: 'side', prompt: 'Ultra high resolution macro photo of the jewelry from side profile angle, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography' },
+  { angle: 'top', prompt: 'Ultra high resolution macro photo of the jewelry from top-down flat lay angle, 4K, extreme detail, white marble surface, studio lighting, sharp focus on craftsmanship details, professional product photography' },
+  { angle: 'macro', prompt: "Extreme macro close-up of the jewelry craftsmanship detail, 4K, bokeh background, jeweler's loupe perspective, ultra sharp focus on gemstone facets and metalwork, professional product photography" },
 ]
 
 async function sleep(ms: number) {
@@ -73,24 +53,13 @@ async function generateZoomImage(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail of this specific piece of jewelry faithfully. Generate a photorealistic 4K product photograph.`,
-              },
-              {
-                inline_data: {
-                  mime_type: 'image/png',
-                  data: jewelryImageBase64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseModalities: ['TEXT', 'IMAGE'],
-        },
+        contents: [{
+          parts: [
+            { text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail faithfully. Generate a photorealistic 4K product photograph.` },
+            { inline_data: { mime_type: 'image/png', data: jewelryImageBase64 } },
+          ],
+        }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
   )
@@ -103,11 +72,8 @@ async function generateZoomImage(
 
   const result = await response.json()
   const parts = result.candidates?.[0]?.content?.parts || []
-
   for (const part of parts) {
-    if (part.inlineData?.data) {
-      return { image_base64: part.inlineData.data }
-    }
+    if (part.inlineData?.data) return { image_base64: part.inlineData.data }
   }
 
   throw new Error('AI model did not return an image')
@@ -133,6 +99,57 @@ async function generateWithRetry(
   throw new Error('Zoom generation failed after all retries')
 }
 
+async function processZoomShots(jobId: string, jewelryImageUrl: string, projectId: string, imageId: string, userId: string) {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  try {
+    const jewelryBase64 = await fetchImageAsBase64(jewelryImageUrl)
+
+    for (let i = 0; i < ZOOM_SHOTS.length; i++) {
+      const { angle, prompt } = ZOOM_SHOTS[i]
+
+      const progressPct = Math.round(((i * 2 + 1) / (ZOOM_SHOTS.length * 2)) * 100)
+      await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', jobId)
+
+      const result = await generateWithRetry(jewelryBase64, prompt)
+
+      const storagePath = `${userId}/${projectId}/zoom/${imageId}/${angle}.png`
+      const binaryStr = atob(result.image_base64)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
+      const uploadBlob = new Blob([bytes], { type: 'image/png' })
+
+      const { error: storageError } = await supabase.storage
+        .from('project-images')
+        .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
+
+      if (storageError) throw new Error(`Storage upload failed for ${angle}: ${storageError.message}`)
+
+      const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
+
+      await supabase.from('project_images').insert({
+        project_id: projectId,
+        storage_url: publicUrlData.publicUrl,
+        type: 'zoom',
+        metadata: { angle, resolution: '4K', jewelry_image_id: imageId },
+      })
+
+      const uploadPct = Math.round(((i * 2 + 2) / (ZOOM_SHOTS.length * 2)) * 100)
+      await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', jobId)
+
+      if (i < ZOOM_SHOTS.length - 1) await sleep(1000)
+    }
+
+    await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
+    await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'zoom_shots_generated' })
+  } catch (error) {
+    await supabase.from('processing_jobs').update({
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unknown error',
+    }).eq('id', jobId)
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -143,7 +160,7 @@ Deno.serve(async (req) => {
 
     if (!jewelry_image_url || !project_id || !image_id || !user_id) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: jewelry_image_url, project_id, image_id, user_id' }),
+        JSON.stringify({ error: 'Missing required fields' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -152,91 +169,23 @@ Deno.serve(async (req) => {
 
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
-      .insert({
-        project_id,
-        image_id,
-        job_type: 'zoom',
-        status: 'processing',
-        progress: 5,
-      })
+      .insert({ project_id, image_id, job_type: 'zoom', status: 'processing', progress: 5 })
       .select()
       .single()
 
     if (jobError) {
       return new Response(
-        JSON.stringify({ error: 'Failed to create processing job', details: jobError.message }),
+        JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Fetch the jewelry image once, reuse for all shots
-    const jewelryBase64 = await fetchImageAsBase64(jewelry_image_url)
-    const generatedUrls: string[] = []
+    EdgeRuntime.waitUntil(processZoomShots(job.id, jewelry_image_url, project_id, image_id, user_id))
 
-    try {
-      for (let i = 0; i < ZOOM_SHOTS.length; i++) {
-        const { angle, prompt } = ZOOM_SHOTS[i]
-
-        const progressPct = Math.round(((i * 2 + 1) / (ZOOM_SHOTS.length * 2)) * 100)
-        await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', job.id)
-
-        const result = await generateWithRetry(jewelryBase64, prompt)
-
-        const storagePath = `${user_id}/${project_id}/zoom/${image_id}/${angle}.png`
-
-        const binaryStr = atob(result.image_base64)
-        const bytes = new Uint8Array(binaryStr.length)
-        for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
-        const uploadBlob = new Blob([bytes], { type: 'image/png' })
-
-        const { error: storageError } = await supabase.storage
-          .from('project-images')
-          .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
-
-        if (storageError) {
-          throw new Error(`Storage upload failed for ${angle}: ${storageError.message}`)
-        }
-
-        const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
-
-        await supabase.from('project_images').insert({
-          project_id,
-          storage_url: publicUrlData.publicUrl,
-          type: 'zoom',
-          metadata: { angle, resolution: '4K', jewelry_image_id: image_id },
-        })
-
-        generatedUrls.push(publicUrlData.publicUrl)
-
-        const uploadPct = Math.round(((i * 2 + 2) / (ZOOM_SHOTS.length * 2)) * 100)
-        await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', job.id)
-
-        // Delay between API calls to avoid rate limiting
-        if (i < ZOOM_SHOTS.length - 1) {
-          await sleep(1000)
-        }
-      }
-
-      await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', job.id)
-
-      // Track usage
-      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'zoom_shots_generated' })
-
-      return new Response(
-        JSON.stringify({ success: true, zoom_urls: generatedUrls }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    } catch (genError) {
-      await supabase.from('processing_jobs').update({
-        status: 'failed',
-        error_message: genError instanceof Error ? genError.message : 'Unknown error',
-      }).eq('id', job.id)
-
-      return new Response(
-        JSON.stringify({ error: 'Zoom generation failed', details: genError instanceof Error ? genError.message : 'Unknown error' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    return new Response(
+      JSON.stringify({ success: true, job_id: job.id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   } catch (error) {
     return new Response(
       JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),

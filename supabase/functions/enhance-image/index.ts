@@ -13,9 +13,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Gemini 2.0 Flash for image enhancement
-
-
 interface RequestBody {
   image_url: string
   project_id: string
@@ -48,24 +45,13 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.',
-              },
-              {
-                inline_data: {
-                  mime_type: 'image/png',
-                  data: imageBase64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseModalities: ['TEXT', 'IMAGE'],
-        },
+        contents: [{
+          parts: [
+            { text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.' },
+            { inline_data: { mime_type: 'image/png', data: imageBase64 } },
+          ],
+        }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
   )
@@ -78,14 +64,10 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
 
   const result = await response.json()
   const parts = result.candidates?.[0]?.content?.parts || []
-
   for (const part of parts) {
-    if (part.inlineData?.data) {
-      return { image_base64: part.inlineData.data }
-    }
+    if (part.inlineData?.data) return { image_base64: part.inlineData.data }
   }
 
-  // Fallback: return original image if no image generated
   console.warn('Gemini did not return an image, using original as fallback')
   return { image_base64: imageBase64 }
 }
@@ -106,6 +88,47 @@ async function enhanceWithRetry(imageUrl: string, retries = MAX_RETRIES): Promis
   throw new Error('Enhancement failed after all retries')
 }
 
+async function processEnhancement(jobId: string, imageUrl: string, projectId: string, imageId: string, userId: string) {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  try {
+    await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
+
+    const result = await enhanceWithRetry(imageUrl)
+
+    await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', jobId)
+
+    const storagePath = `${userId}/${projectId}/enhanced/enhanced_${imageId}.png`
+    const binaryStr = atob(result.image_base64)
+    const bytes = new Uint8Array(binaryStr.length)
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+    const uploadBlob = new Blob([bytes], { type: 'image/png' })
+
+    const { error: storageError } = await supabase.storage
+      .from('project-images')
+      .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
+
+    if (storageError) throw new Error(`Storage upload failed: ${storageError.message}`)
+
+    const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
+
+    await supabase.from('project_images').insert({
+      project_id: projectId,
+      storage_url: publicUrlData.publicUrl,
+      type: 'enhanced',
+      metadata: { original_image_id: imageId },
+    })
+
+    await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
+    await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'images_enhanced' })
+  } catch (error) {
+    await supabase.from('processing_jobs').update({
+      status: 'failed',
+      error_message: error instanceof Error ? error.message : 'Unknown error',
+    }).eq('id', jobId)
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -116,7 +139,7 @@ Deno.serve(async (req) => {
 
     if (!image_url || !project_id || !image_id || !user_id) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: image_url, project_id, image_id, user_id' }),
+        JSON.stringify({ error: 'Missing required fields' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -125,77 +148,24 @@ Deno.serve(async (req) => {
 
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
-      .insert({
-        project_id,
-        image_id,
-        job_type: 'enhance',
-        status: 'processing',
-        progress: 10,
-      })
+      .insert({ project_id, image_id, job_type: 'enhance', status: 'processing', progress: 5 })
       .select()
       .single()
 
     if (jobError) {
       return new Response(
-        JSON.stringify({ error: 'Failed to create processing job', details: jobError.message }),
+        JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', job.id)
+    // Process in background — return immediately
+    EdgeRuntime.waitUntil(processEnhancement(job.id, image_url, project_id, image_id, user_id))
 
-    try {
-      const result = await enhanceWithRetry(image_url)
-
-      await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', job.id)
-
-      const storagePath = `${user_id}/${project_id}/enhanced/enhanced_${image_id}.png`
-
-      const binaryStr = atob(result.image_base64)
-      const bytes = new Uint8Array(binaryStr.length)
-      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-      const uploadBlob = new Blob([bytes], { type: 'image/png' })
-
-      const { error: storageError } = await supabase.storage
-        .from('project-images')
-        .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
-
-      if (storageError) {
-        throw new Error(`Storage upload failed: ${storageError.message}`)
-      }
-
-      const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
-
-      await supabase.from('project_images').insert({
-        project_id,
-        storage_url: publicUrlData.publicUrl,
-        type: 'enhanced',
-        metadata: { original_image_id: image_id },
-      })
-
-      await supabase.from('processing_jobs').update({
-        status: 'complete',
-        progress: 100,
-      }).eq('id', job.id)
-
-      // Track usage
-      await supabase.rpc('increment_usage', { p_user_id: user_id, p_field: 'images_enhanced' })
-
-      return new Response(
-        JSON.stringify({ success: true, enhanced_url: publicUrlData.publicUrl }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    } catch (enhanceError) {
-      await supabase.from('processing_jobs').update({
-        status: 'failed',
-        error_message: enhanceError instanceof Error ? enhanceError.message : 'Unknown error',
-      }).eq('id', job.id)
-
-      return new Response(
-        JSON.stringify({ error: 'Enhancement failed', details: enhanceError instanceof Error ? enhanceError.message : 'Unknown error' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    return new Response(
+      JSON.stringify({ success: true, job_id: job.id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   } catch (error) {
     return new Response(
       JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),

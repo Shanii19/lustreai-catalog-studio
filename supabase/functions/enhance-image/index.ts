@@ -50,6 +50,7 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
     },
     body: JSON.stringify({
       model: MODEL,
+      modalities: ['image', 'text'],
       messages: [
         {
           role: 'user',

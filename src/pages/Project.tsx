@@ -4,6 +4,7 @@ import DashboardSidebar from "@/components/DashboardSidebar";
 import StageProgressBar from "@/components/StageProgressBar";
 import UploadStage from "@/components/UploadStage";
 import EnhanceStage from "@/components/EnhanceStage";
+import ModelRenderStage from "@/components/ModelRenderStage";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 
@@ -77,9 +78,10 @@ const Project = () => {
           />
         )}
         {stage === 2 && (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-muted-foreground font-heading">Model Rendering — coming soon</p>
-          </div>
+          <ModelRenderStage
+            images={uploadedImages}
+            onComplete={() => setStage(3)}
+          />
         )}
         {stage === 3 && (
           <div className="flex-1 flex items-center justify-center">

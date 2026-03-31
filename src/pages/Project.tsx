@@ -12,6 +12,8 @@ import { useProcessingStatus } from "@/hooks/useProcessingStatus";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { enhanceAllImages } from "@/services/enhancementService";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {
   1: "enhance",
@@ -27,6 +29,7 @@ const Project = () => {
   const [uploadedImages, setUploadedImages] = useState<{ id: string; url: string; name: string }[]>([]);
   const [showComplete, setShowComplete] = useState(false);
 
+  const { user } = useAuth();
   const { jobs, summary, retryJob, getJobsByType } = useProcessingStatus(id);
 
   useEffect(() => {
@@ -52,9 +55,16 @@ const Project = () => {
       });
   }, [id]);
 
-  const handleUploadComplete = () => {
+  const handleUploadComplete = async () => {
     toast.success("Upload complete — starting enhancement");
     setStage(1);
+    // Trigger enhancement for all uploaded images
+    if (user && id) {
+      enhanceAllImages(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
+        if (failed > 0) toast.error(`${failed} image(s) failed to enhance`);
+        if (succeeded > 0) toast.success(`${succeeded} image(s) enhanced successfully`);
+      });
+    }
   };
 
   const handleRetry = async (imageId: string, jobType: "enhance" | "model_render" | "zoom") => {

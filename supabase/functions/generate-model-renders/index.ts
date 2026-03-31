@@ -5,16 +5,16 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// TODO: Replace with your real model generation API URL
-const MODEL_GEN_API_URL = Deno.env.get('MODEL_GEN_API_URL') || 'https://api.nanobananapi.com/generate'
-// TODO: Replace with your real model generation API key
-const MODEL_GEN_API_KEY = Deno.env.get('MODEL_GEN_API_KEY') || ''
-
+const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
+const AI_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
+
+// Using Nano Banana (google/gemini-2.5-flash-image) for image generation
+const MODEL = 'google/gemini-2.5-flash-image'
 
 interface RequestBody {
   enhanced_image_url: string
@@ -38,7 +38,6 @@ const VARIANT_PROMPTS = [
   },
 ]
 
-// TODO: Adjust this base prompt for your specific jewelry type detection or user input
 const BASE_PROMPT =
   'A beautiful Asian female model wearing elegant jewelry, professional studio lighting, clean white background, high fashion photography, photorealistic, 8k'
 
@@ -46,51 +45,89 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function callModelGenAPI(
-  enhancedImageUrl: string,
-  promptSuffix: string
-): Promise<{ image_url?: string; image_base64?: string }> {
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}`
+async function fetchImageAsBase64(imageUrl: string): Promise<string> {
+  const resp = await fetch(imageUrl)
+  if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
+  const arrayBuffer = await resp.arrayBuffer()
+  const bytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
 
-  // TODO: Adapt this request body to match your real model generation API spec
-  // This assumes an img2img / ControlNet style API that accepts a reference image
-  const response = await fetch(MODEL_GEN_API_URL, {
+async function generateModelImage(
+  enhancedImageBase64: string,
+  promptSuffix: string
+): Promise<{ image_base64: string }> {
+  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. The model should be wearing the exact jewelry shown in the reference image. Generate a photorealistic fashion photograph.`
+
+  const response = await fetch(AI_GATEWAY_URL, {
     method: 'POST',
     headers: {
+      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${MODEL_GEN_API_KEY}`,
-      // TODO: Add any additional headers required by your provider
     },
     body: JSON.stringify({
-      prompt: fullPrompt,
-      reference_image_url: enhancedImageUrl,
-      // TODO: If provider uses ControlNet, specify control mode:
-      // control_type: 'reference',
-      // strength: 0.7,
-      num_images: 1,
-      width: 768,
-      height: 1024,
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: fullPrompt,
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${enhancedImageBase64}`,
+              },
+            },
+          ],
+        },
+      ],
     }),
   })
 
+  if (response.status === 429) {
+    throw new Error('Rate limited — please try again later')
+  }
+  if (response.status === 402) {
+    throw new Error('AI credits exhausted — please add funds')
+  }
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Model gen API error ${response.status}: ${errorText}`)
+    const errText = await response.text()
+    throw new Error(`AI Gateway error ${response.status}: ${errText}`)
   }
 
   const result = await response.json()
-  // TODO: Adapt response parsing to match your provider's response format
-  return result
+  const content = result.choices?.[0]?.message?.content
+
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part.type === 'image_url' && part.image_url?.url) {
+        const dataMatch = part.image_url.url.match(/^data:[^;]+;base64,(.+)$/)
+        if (dataMatch) return { image_base64: dataMatch[1] }
+      }
+      if (part.inline_data?.data) {
+        return { image_base64: part.inline_data.data }
+      }
+    }
+  }
+
+  throw new Error('AI model did not return an image')
 }
 
 async function generateWithRetry(
-  enhancedImageUrl: string,
+  imageBase64: string,
   promptSuffix: string,
   retries = MAX_RETRIES
-): Promise<{ image_url?: string; image_base64?: string }> {
+): Promise<{ image_base64: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await callModelGenAPI(enhancedImageUrl, promptSuffix)
+      return await generateModelImage(imageBase64, promptSuffix)
     } catch (error) {
       if (attempt < retries) {
         console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
@@ -120,7 +157,6 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-    // Create processing job
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({
@@ -140,33 +176,25 @@ Deno.serve(async (req) => {
       )
     }
 
+    // Fetch the enhanced image once, reuse for all variants
+    const enhancedImageBase64 = await fetchImageAsBase64(enhanced_image_url)
     const generatedUrls: string[] = []
 
     try {
       for (let i = 0; i < VARIANT_PROMPTS.length; i++) {
         const { variant, suffix } = VARIANT_PROMPTS[i]
 
-        // Update progress per variant
         const progressPct = Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100)
         await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', job.id)
 
-        const result = await generateWithRetry(enhanced_image_url, suffix)
+        const result = await generateWithRetry(enhancedImageBase64, suffix)
 
-        // Upload to storage
         const storagePath = `${user_id}/${project_id}/models/${image_id}/variant_${variant}.png`
 
-        let uploadBlob: Blob
-        if (result.image_base64) {
-          const binaryStr = atob(result.image_base64)
-          const bytes = new Uint8Array(binaryStr.length)
-          for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
-          uploadBlob = new Blob([bytes], { type: 'image/png' })
-        } else if (result.image_url) {
-          const imgResp = await fetch(result.image_url)
-          uploadBlob = await imgResp.blob()
-        } else {
-          throw new Error(`Variant ${variant}: API returned no image data`)
-        }
+        const binaryStr = atob(result.image_base64)
+        const bytes = new Uint8Array(binaryStr.length)
+        for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
+        const uploadBlob = new Blob([bytes], { type: 'image/png' })
 
         const { error: storageError } = await supabase.storage
           .from('project-images')
@@ -178,7 +206,6 @@ Deno.serve(async (req) => {
 
         const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
 
-        // Insert model image record
         await supabase.from('project_images').insert({
           project_id,
           storage_url: publicUrlData.publicUrl,
@@ -188,12 +215,15 @@ Deno.serve(async (req) => {
 
         generatedUrls.push(publicUrlData.publicUrl)
 
-        // Update progress after upload
         const uploadPct = Math.round(((i * 2 + 2) / (VARIANT_PROMPTS.length * 2)) * 100)
         await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', job.id)
+
+        // Add delay between API calls to avoid rate limiting
+        if (i < VARIANT_PROMPTS.length - 1) {
+          await sleep(1000)
+        }
       }
 
-      // Mark complete
       await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', job.id)
 
       return new Response(

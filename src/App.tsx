@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { Loader2 } from "lucide-react";
 
 // ✅ Auth flow tested

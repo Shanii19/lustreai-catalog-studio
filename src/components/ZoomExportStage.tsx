@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
-import { Download, Check, Image as ImageIcon } from "lucide-react";
+import { Download, Check, AlertCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
+import type { ProcessingJob } from "@/hooks/useProcessingStatus";
 
 interface ImageItem {
   id: string;
@@ -27,16 +29,20 @@ const generatePlaceholderUrl = (seed: number) =>
 interface Props {
   images: ImageItem[];
   onComplete: (zoomUrls: string[]) => void;
+  jobs: ProcessingJob[];
+  onRetry?: (imageId: string) => void;
 }
 
-const ZoomExportStage = ({ images, onComplete }: Props) => {
+const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
   const [shots, setShots] = useState<Record<string, ZoomShot[]>>({});
   const [format, setFormat] = useState<"png" | "jpeg">("png");
   const [exporting, setExporting] = useState(false);
   const [completed, setCompleted] = useState(false);
 
-  // Initialize zoom shot generation mock
+  const hasRealJobs = jobs.length > 0;
+
   useEffect(() => {
+    if (hasRealJobs) return;
     const initial: Record<string, ZoomShot[]> = {};
     images.forEach((img, imgIdx) => {
       initial[img.id] = ANGLES.map((angle, ai) => ({
@@ -72,11 +78,18 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
     });
 
     return () => timers.forEach(clearTimeout);
-  }, [images]);
+  }, [images, hasRealJobs]);
 
-  const allDone = images.length > 0 && images.every((img) =>
-    (shots[img.id] || []).every((s) => s.done)
-  );
+  const getJobStatus = (imageId: string) => {
+    if (!hasRealJobs) return null;
+    return jobs.find((j) => j.image_id === imageId && j.job_type === "zoom") || null;
+  };
+
+  const allDone = images.length > 0 && images.every((img) => {
+    const job = getJobStatus(img.id);
+    if (job?.status === "failed") return true;
+    return (shots[img.id] || []).every((s) => s.done);
+  });
 
   const totalReady = Object.values(shots).flat().filter((s) => s.done).length;
 
@@ -86,7 +99,6 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
       const blob = await resp.blob();
       saveAs(blob, `${name}.${format}`);
     } catch {
-      // fallback: open in new tab
       window.open(url, "_blank");
     }
   }, [format]);
@@ -95,7 +107,7 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
     setExporting(true);
     try {
       const zip = new JSZip();
-      const allShots = Object.entries(shots).flatMap(([_imgId, arr]) => arr.filter((s) => s.done));
+      const allShots = Object.entries(shots).flatMap(([, arr]) => arr.filter((s) => s.done));
       await Promise.all(
         allShots.map(async (shot) => {
           const resp = await fetch(shot.url);
@@ -123,7 +135,6 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
   return (
     <div className="flex-1 flex flex-col overflow-hidden fade-in-up">
       <div className="flex-1 overflow-auto px-6 py-6 space-y-6">
-        {/* Header */}
         <div>
           <h2 className="font-heading text-xl font-bold">Generating 4K Detail Shots</h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -131,34 +142,40 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
           </p>
         </div>
 
-        {/* Zoom panels */}
         {images.map((img) => {
           const imgShots = shots[img.id] || [];
+          const jobStatus = getJobStatus(img.id);
+          const isFailed = jobStatus?.status === "failed";
+
+          if (isFailed) {
+            return (
+              <div key={img.id} className="rounded-xl border-2 border-destructive/30 bg-destructive/5 p-5 space-y-3">
+                <div className="flex items-center gap-3">
+                  <AlertCircle className="h-5 w-5 text-destructive" />
+                  <p className="text-sm font-medium">{img.name} — Zoom generation failed</p>
+                  {onRetry && (
+                    <Button size="sm" variant="outline" className="ml-auto gap-1.5" onClick={() => onRetry(img.id)}>
+                      <RotateCcw className="h-3.5 w-3.5" /> Retry
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={img.id} className="rounded-xl border border-border/50 bg-card p-5 space-y-3">
               <p className="text-sm font-medium font-heading">{img.name}</p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {imgShots.map((shot) => (
-                  <div
-                    key={shot.id}
-                    className="group relative rounded-lg overflow-hidden border border-border/50"
-                  >
+                  <div key={shot.id} className="group relative rounded-lg overflow-hidden border border-border/50">
                     {shot.done ? (
                       <>
-                        <img
-                          src={shot.url}
-                          alt={shot.angle}
-                          className="w-full aspect-square object-cover"
-                        />
-                        {/* 4K badge */}
-                        <Badge className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5">
-                          4K
-                        </Badge>
-                        {/* Angle badge */}
+                        <img src={shot.url} alt={shot.angle} className="w-full aspect-square object-cover" />
+                        <Badge className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5">4K</Badge>
                         <div className="absolute bottom-0 inset-x-0 bg-background/80 px-2 py-1.5 text-center">
                           <span className="text-[11px] font-medium">{shot.angle}</span>
                         </div>
-                        {/* Download hover */}
                         <button
                           onClick={() => handleDownloadSingle(shot.url, `${shot.angle}_${shot.id}`)}
                           className="absolute top-2 right-2 h-7 w-7 flex items-center justify-center rounded-full bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-background"
@@ -167,11 +184,14 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
                         </button>
                       </>
                     ) : (
-                      <div className="flex aspect-square flex-col items-center justify-center bg-secondary/50 animate-pulse">
-                        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin mb-2" />
-                        <p className="text-[11px] text-muted-foreground">Generating…</p>
-                        <p className="text-sm font-heading font-bold text-primary">{shot.progress}%</p>
-                        <span className="mt-1 text-[10px] text-muted-foreground/60">{shot.angle}</span>
+                      <div className="flex aspect-square flex-col items-center justify-center bg-secondary/50">
+                        <div className="w-full px-3 space-y-2">
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span>{shot.angle}</span>
+                            <span className="font-heading font-bold text-primary">{shot.progress}%</span>
+                          </div>
+                          <Progress value={shot.progress} className="h-1 [&>div]:bg-primary" />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -190,29 +210,18 @@ const ZoomExportStage = ({ images, onComplete }: Props) => {
           </p>
 
           <div className="flex items-center gap-2">
-            {/* Format selector */}
             <div className="flex rounded-md border border-border/50 overflow-hidden text-xs">
               <button
                 onClick={() => setFormat("png")}
                 className={`px-3 py-1.5 transition-colors ${format === "png" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary"}`}
-              >
-                PNG
-              </button>
+              >PNG</button>
               <button
                 onClick={() => setFormat("jpeg")}
                 className={`px-3 py-1.5 transition-colors ${format === "jpeg" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary"}`}
-              >
-                JPEG
-              </button>
+              >JPEG</button>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDownloadAll}
-              disabled={exporting}
-              className="gap-1.5"
-            >
+            <Button variant="outline" size="sm" onClick={handleDownloadAll} disabled={exporting} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />
               {exporting ? "Zipping…" : "Download All as ZIP"}
             </Button>

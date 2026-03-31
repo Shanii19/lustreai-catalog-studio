@@ -14,6 +14,57 @@ export type Database = {
   }
   public: {
     Tables: {
+      processing_jobs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          image_id: string
+          job_type: Database["public"]["Enums"]["job_type"]
+          progress: number
+          project_id: string
+          status: Database["public"]["Enums"]["job_status"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          image_id: string
+          job_type: Database["public"]["Enums"]["job_type"]
+          progress?: number
+          project_id: string
+          status?: Database["public"]["Enums"]["job_status"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          image_id?: string
+          job_type?: Database["public"]["Enums"]["job_type"]
+          progress?: number
+          project_id?: string
+          status?: Database["public"]["Enums"]["job_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_jobs_image_id_fkey"
+            columns: ["image_id"]
+            isOneToOne: false
+            referencedRelation: "project_images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_jobs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -109,6 +160,8 @@ export type Database = {
     }
     Enums: {
       image_type: "original" | "enhanced" | "model" | "zoom"
+      job_status: "queued" | "processing" | "complete" | "failed"
+      job_type: "enhance" | "model_render" | "zoom"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -237,6 +290,8 @@ export const Constants = {
   public: {
     Enums: {
       image_type: ["original", "enhanced", "model", "zoom"],
+      job_status: ["queued", "processing", "complete", "failed"],
+      job_type: ["enhance", "model_render", "zoom"],
     },
   },
 } as const

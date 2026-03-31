@@ -75,6 +75,7 @@ async function generateZoomImage(
     },
     body: JSON.stringify({
       model: MODEL,
+      modalities: ['image', 'text'],
       messages: [
         {
           role: 'user',

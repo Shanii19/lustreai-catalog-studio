@@ -55,9 +55,16 @@ const Project = () => {
       });
   }, [id]);
 
-  const handleUploadComplete = () => {
+  const handleUploadComplete = async () => {
     toast.success("Upload complete — starting enhancement");
     setStage(1);
+    // Trigger enhancement for all uploaded images
+    if (user && id) {
+      enhanceAllImages(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
+        if (failed > 0) toast.error(`${failed} image(s) failed to enhance`);
+        if (succeeded > 0) toast.success(`${succeeded} image(s) enhanced successfully`);
+      });
+    }
   };
 
   const handleRetry = async (imageId: string, jobType: "enhance" | "model_render" | "zoom") => {

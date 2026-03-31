@@ -68,8 +68,8 @@ const DashboardHome = () => {
       <div className="flex-1 overflow-auto px-6 py-6 space-y-8 page-enter">
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {stats.map((s) => (
-            <div key={s.label} className="rounded-xl border border-border/50 bg-card p-5">
+          {stats.map((s, i) => (
+            <div key={s.label} className="rounded-xl border border-border/50 bg-card p-5 stagger-card" style={{ animationDelay: `${i * 50}ms` }}>
               <div className="flex items-center justify-between">
                 <span className="text-3xl font-heading font-bold text-primary">{s.value}</span>
                 <s.icon className="h-5 w-5 text-muted-foreground/40" />

@@ -13,8 +13,8 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 2000
 
-// Using Nano Banana (google/gemini-2.5-flash-image) for image generation
-const MODEL = 'google/gemini-2.5-flash-image'
+// Using Gemini 2.0 Flash for model image generation
+
 
 interface RequestBody {
   enhanced_image_url: string

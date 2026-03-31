@@ -14,6 +14,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { enhanceAllImages } from "@/services/enhancementService";
 import { generateAllModelRenders } from "@/services/modelRenderService";
+import { generateAllZoomShots } from "@/services/zoomGenerationService";
 import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {

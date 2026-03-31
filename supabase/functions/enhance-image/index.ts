@@ -50,6 +50,7 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
     },
     body: JSON.stringify({
       model: MODEL,
+      modalities: ['image', 'text'],
       messages: [
         {
           role: 'user',
@@ -83,10 +84,18 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
 
   const result = await response.json()
   
-  // Extract image from response — Gemini image models return inline_data
   const content = result.choices?.[0]?.message?.content
+  const images = result.choices?.[0]?.message?.images
+
+  // Check images array format (Lovable AI gateway format)
+  if (Array.isArray(images) && images.length > 0) {
+    const imgUrl = images[0]?.image_url?.url
+    if (imgUrl) {
+      const dataMatch = imgUrl.match(/^data:[^;]+;base64,(.+)$/)
+      if (dataMatch) return { image_base64: dataMatch[1] }
+    }
+  }
   
-  // Check if response contains image parts
   if (Array.isArray(content)) {
     for (const part of content) {
       if (part.type === 'image_url' && part.image_url?.url) {

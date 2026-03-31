@@ -71,6 +71,7 @@ async function generateModelImage(
     },
     body: JSON.stringify({
       model: MODEL,
+      modalities: ['image', 'text'],
       messages: [
         {
           role: 'user',
@@ -103,7 +104,19 @@ async function generateModelImage(
   }
 
   const result = await response.json()
+  console.log('AI response keys:', JSON.stringify(Object.keys(result)))
+  
   const content = result.choices?.[0]?.message?.content
+  const images = result.choices?.[0]?.message?.images
+
+  // Check images array format (Lovable AI gateway format)
+  if (Array.isArray(images) && images.length > 0) {
+    const imgUrl = images[0]?.image_url?.url
+    if (imgUrl) {
+      const dataMatch = imgUrl.match(/^data:[^;]+;base64,(.+)$/)
+      if (dataMatch) return { image_base64: dataMatch[1] }
+    }
+  }
 
   if (Array.isArray(content)) {
     for (const part of content) {
@@ -117,6 +130,8 @@ async function generateModelImage(
     }
   }
 
+  // If content is a string, the model didn't generate an image
+  console.error('No image in response. Content type:', typeof content, 'Content preview:', JSON.stringify(content)?.slice(0, 200))
   throw new Error('AI model did not return an image')
 }
 

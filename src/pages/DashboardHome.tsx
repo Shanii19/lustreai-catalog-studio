@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Project = Tables<"projects">;
+type ProjectWithThumb = Project & { thumbnail?: string };
 
 const statusColor: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
@@ -18,7 +19,7 @@ const statusColor: Record<string, string> = {
 const DashboardHome = () => {
   const { openNewProject } = useOutletContext<{ openNewProject: () => void }>();
   const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectWithThumb[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,8 +30,21 @@ const DashboardHome = () => {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(6)
-      .then(({ data }) => {
-        setProjects(data ?? []);
+      .then(async ({ data }) => {
+        const projs: ProjectWithThumb[] = data ?? [];
+        // Fetch first image for each project as thumbnail
+        for (const p of projs) {
+          const { data: imgs } = await supabase
+            .from("project_images")
+            .select("storage_url")
+            .eq("project_id", p.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (imgs && imgs.length > 0) {
+            p.thumbnail = imgs[0].storage_url;
+          }
+        }
+        setProjects(projs);
         setLoading(false);
       });
   }, [user]);
@@ -93,8 +107,12 @@ const DashboardHome = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {projects.map((p) => (
                 <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30">
-                  <div className="h-32 bg-secondary/50 flex items-center justify-center">
-                    <Diamond className="h-8 w-8 text-muted-foreground/20" />
+                  <div className="h-32 bg-secondary/50 flex items-center justify-center overflow-hidden">
+                    {p.thumbnail ? (
+                      <img src={p.thumbnail} alt={p.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Diamond className="h-8 w-8 text-muted-foreground/20" />
+                    )}
                   </div>
                   <div className="p-4 space-y-2">
                     <div className="flex items-center justify-between">

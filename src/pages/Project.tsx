@@ -5,6 +5,8 @@ import StageProgressBar from "@/components/StageProgressBar";
 import UploadStage from "@/components/UploadStage";
 import EnhanceStage from "@/components/EnhanceStage";
 import ModelRenderStage from "@/components/ModelRenderStage";
+import ZoomExportStage from "@/components/ZoomExportStage";
+import ProjectComplete from "@/components/ProjectComplete";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 
@@ -14,6 +16,7 @@ const Project = () => {
   const [stage, setStage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [uploadedImages, setUploadedImages] = useState<{ id: string; url: string; name: string }[]>([]);
+  const [showComplete, setShowComplete] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -83,10 +86,23 @@ const Project = () => {
             onComplete={() => setStage(3)}
           />
         )}
-        {stage === 3 && (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-muted-foreground font-heading">Export — coming soon</p>
-          </div>
+        {stage === 3 && !showComplete && (
+          <ZoomExportStage
+            images={uploadedImages}
+            onComplete={async () => {
+              // Update project status to complete
+              if (id) {
+                await supabase.from("projects").update({ status: "complete" }).eq("id", id);
+              }
+              setShowComplete(true);
+            }}
+          />
+        )}
+        {showComplete && (
+          <ProjectComplete
+            imageCount={uploadedImages.length * 4}
+            projectName={projectName}
+          />
         )}
       </main>
     </div>

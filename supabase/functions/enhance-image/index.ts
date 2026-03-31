@@ -57,6 +57,10 @@ async function enhanceWithAI(imageUrl: string): Promise<{ image_base64: string }
   )
 
   if (response.status === 429) throw new Error('Rate limited — please try again later')
+  if (response.status === 404 || response.status === 410) {
+    const errText = await response.text()
+    throw new Error(`Gemini model unavailable (${response.status}). Verify the model name and availability. ${errText}`)
+  }
   if (!response.ok) {
     const errText = await response.text()
     throw new Error(`Gemini API error ${response.status}: ${errText}`)

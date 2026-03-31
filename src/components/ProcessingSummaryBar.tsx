@@ -15,6 +15,7 @@ interface Props {
 }
 
 const LABELS: Record<JobType, string> = {
+  bg_remove: "background removed",
   enhance: "enhanced",
   model_render: "rendered",
   zoom: "generated",

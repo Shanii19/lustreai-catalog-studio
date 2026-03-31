@@ -13,6 +13,8 @@ interface UploadedFile {
   uploading: boolean;
   done: boolean;
   dbId?: string;
+  bgRemoving?: boolean;
+  bgDone?: boolean;
 }
 
 interface Props {
@@ -66,6 +68,27 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
     addFiles(e.dataTransfer.files);
   }, [addFiles]);
 
+  const triggerBgRemoval = async (imageId: string, imageUrl: string, fileIdx: number) => {
+    if (!user) return;
+    setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: true } : p));
+
+    const { error } = await supabase.functions.invoke("remove-background", {
+      body: {
+        image_url: imageUrl,
+        project_id: projectId,
+        image_id: imageId,
+        user_id: user.id,
+      },
+    });
+
+    if (error) {
+      console.error("BG removal error:", error);
+      toast.error("Background removal failed — will use original image");
+    }
+
+    setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: false, bgDone: true } : p));
+  };
+
   const uploadAll = async () => {
     if (!user) return;
     const toUpload = files.filter((f) => !f.done);
@@ -102,8 +125,12 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
 
       setFiles((prev) => prev.map((p, j) => j === idx ? { ...p, uploading: false, progress: 100, done: true, dbId: dbData.id } : p));
       setUploadedImages((prev) => [...prev, { id: dbData.id, url: urlData.publicUrl, name: f.file.name }]);
+
+      // Auto-trigger background removal
+      toast.info(`Removing background from ${f.file.name}…`);
+      triggerBgRemoval(dbData.id, urlData.publicUrl, idx);
     }
-    toast.success("Upload complete");
+    toast.success("Upload complete — background removal in progress");
   };
 
   const removeUploaded = async (id: string) => {
@@ -157,7 +184,9 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
                   <p className="truncate text-sm font-medium">{f.file.name}</p>
                   <p className="text-xs text-muted-foreground">{formatSize(f.file.size)}</p>
                   {f.uploading && <Progress value={f.progress} className="h-1.5 progress-smooth [&>div]:bg-primary" />}
-                  {f.done && <p className="text-xs text-emerald-400">Uploaded ✓</p>}
+                  {f.done && !f.bgRemoving && !f.bgDone && <p className="text-xs text-emerald-400">Uploaded ✓</p>}
+                  {f.bgRemoving && <p className="text-xs text-primary animate-pulse">Removing background…</p>}
+                  {f.bgDone && <p className="text-xs text-emerald-400">Uploaded & BG removed ✓</p>}
                 </div>
                 {!f.uploading && !f.done && (
                   <button onClick={() => removeFile(i)} className="text-muted-foreground hover:text-foreground">

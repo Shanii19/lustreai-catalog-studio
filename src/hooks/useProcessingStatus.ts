@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type JobType = "enhance" | "model_render" | "zoom";
+export type JobType = "enhance" | "model_render" | "zoom" | "bg_remove";
 export type JobStatus = "queued" | "processing" | "complete" | "failed";
 
 export interface ProcessingJob {

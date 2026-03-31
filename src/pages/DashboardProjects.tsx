@@ -123,7 +123,7 @@ const DashboardProjects = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((p) => (
-              <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30">
+              <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30 stagger-card">
                 <div className="h-32 bg-secondary/50 flex items-center justify-center">
                   <Diamond className="h-8 w-8 text-muted-foreground/20" />
                 </div>

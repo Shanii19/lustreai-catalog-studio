@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { enhanceAllImages } from "@/services/enhancementService";
+import { generateAllModelRenders } from "@/services/modelRenderService";
 import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {
@@ -113,7 +114,17 @@ const Project = () => {
         {stage === 1 && (
           <EnhanceStage
             images={uploadedImages}
-            onComplete={() => { toast.success("Enhancement complete"); setStage(2); }}
+            onComplete={() => {
+              toast.success("Enhancement complete");
+              setStage(2);
+              // Trigger model rendering for all images
+              if (user && id) {
+                generateAllModelRenders(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
+                  if (failed > 0) toast.error(`${failed} model render(s) failed`);
+                  if (succeeded > 0) toast.success(`${succeeded} model render(s) complete`);
+                });
+              }
+            }}
             jobs={getJobsByType("enhance")}
             onRetry={(imageId) => handleRetry(imageId, "enhance")}
           />

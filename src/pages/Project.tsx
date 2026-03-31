@@ -16,6 +16,7 @@ const Project = () => {
   const [stage, setStage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [uploadedImages, setUploadedImages] = useState<{ id: string; url: string; name: string }[]>([]);
+  const [showComplete, setShowComplete] = useState(false);
 
   useEffect(() => {
     if (!id) return;

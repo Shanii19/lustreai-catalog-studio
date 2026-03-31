@@ -46,11 +46,17 @@ const DashboardProjects = () => {
 
   useEffect(() => { fetchProjects(); }, [user]);
 
-  const filtered = projects.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const filtered = useMemo(() => projects.filter((p) => {
+    const matchSearch = p.name.toLowerCase().includes(debouncedSearch.toLowerCase());
     const matchFilter = filter === "all" || p.status === filter;
     return matchSearch && matchFilter;
-  });
+  }), [projects, debouncedSearch, filter]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;

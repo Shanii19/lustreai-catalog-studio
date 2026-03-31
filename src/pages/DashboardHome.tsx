@@ -107,8 +107,12 @@ const DashboardHome = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {projects.map((p) => (
                 <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30">
-                  <div className="h-32 bg-secondary/50 flex items-center justify-center">
-                    <Diamond className="h-8 w-8 text-muted-foreground/20" />
+                  <div className="h-32 bg-secondary/50 flex items-center justify-center overflow-hidden">
+                    {p.thumbnail ? (
+                      <img src={p.thumbnail} alt={p.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Diamond className="h-8 w-8 text-muted-foreground/20" />
+                    )}
                   </div>
                   <div className="p-4 space-y-2">
                     <div className="flex items-center justify-between">

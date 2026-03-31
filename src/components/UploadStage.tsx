@@ -184,7 +184,9 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
                   <p className="truncate text-sm font-medium">{f.file.name}</p>
                   <p className="text-xs text-muted-foreground">{formatSize(f.file.size)}</p>
                   {f.uploading && <Progress value={f.progress} className="h-1.5 progress-smooth [&>div]:bg-primary" />}
-                  {f.done && <p className="text-xs text-emerald-400">Uploaded ✓</p>}
+                  {f.done && !f.bgRemoving && !f.bgDone && <p className="text-xs text-emerald-400">Uploaded ✓</p>}
+                  {f.bgRemoving && <p className="text-xs text-primary animate-pulse">Removing background…</p>}
+                  {f.bgDone && <p className="text-xs text-emerald-400">Uploaded & BG removed ✓</p>}
                 </div>
                 {!f.uploading && !f.done && (
                   <button onClick={() => removeFile(i)} className="text-muted-foreground hover:text-foreground">

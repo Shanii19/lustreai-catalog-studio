@@ -227,7 +227,7 @@ export type Database = {
     Enums: {
       image_type: "original" | "enhanced" | "model" | "zoom"
       job_status: "queued" | "processing" | "complete" | "failed"
-      job_type: "enhance" | "model_render" | "zoom"
+      job_type: "enhance" | "model_render" | "zoom" | "bg_remove"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -357,7 +357,7 @@ export const Constants = {
     Enums: {
       image_type: ["original", "enhanced", "model", "zoom"],
       job_status: ["queued", "processing", "complete", "failed"],
-      job_type: ["enhance", "model_render", "zoom"],
+      job_type: ["enhance", "model_render", "zoom", "bg_remove"],
     },
   },
 } as const

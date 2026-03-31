@@ -91,7 +91,7 @@ const DashboardHome = () => {
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-52 rounded-xl border border-border/50 bg-card animate-pulse" />
+                <div key={i} className="h-52 rounded-xl border border-border/50 skeleton-shimmer" />
               ))}
             </div>
           ) : projects.length === 0 ? (

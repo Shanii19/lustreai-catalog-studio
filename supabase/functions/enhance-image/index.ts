@@ -82,8 +82,9 @@ async function enhanceWithRetry(imageUrl: string, retries = MAX_RETRIES): Promis
       return await enhanceWithAI(imageUrl)
     } catch (error) {
       if (attempt < retries) {
-        console.log(`Enhancement attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
-        await sleep(RETRY_DELAY_MS)
+        const delay = RETRY_DELAYS[attempt] || 60000
+        console.log(`Enhancement attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        await sleep(delay)
       } else {
         throw error
       }

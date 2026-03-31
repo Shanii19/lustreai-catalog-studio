@@ -83,8 +83,9 @@ async function removeWithRetry(imageBase64: string, retries = MAX_RETRIES): Prom
       return await removeBackground(imageBase64)
     } catch (error) {
       if (attempt < retries) {
-        console.log(`BG removal attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
-        await sleep(RETRY_DELAY_MS)
+        const delay = RETRY_DELAYS[attempt] || 60000
+        console.log(`BG removal attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        await sleep(delay)
       } else {
         throw error
       }

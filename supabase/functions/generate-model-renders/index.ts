@@ -98,8 +98,9 @@ async function generateWithRetry(
       return await generateModelImage(imageBase64, promptSuffix)
     } catch (error) {
       if (attempt < retries) {
-        console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms...`)
-        await sleep(RETRY_DELAY_MS)
+        const delay = RETRY_DELAYS[attempt] || 60000
+        console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        await sleep(delay)
       } else {
         throw error
       }

@@ -29,6 +29,7 @@ const Project = () => {
   const [uploadedImages, setUploadedImages] = useState<{ id: string; url: string; name: string }[]>([]);
   const [showComplete, setShowComplete] = useState(false);
 
+  const { user } = useAuth();
   const { jobs, summary, retryJob, getJobsByType } = useProcessingStatus(id);
 
   useEffect(() => {

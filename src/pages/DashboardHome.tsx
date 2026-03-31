@@ -65,11 +65,11 @@ const DashboardHome = () => {
         </Button>
       </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6 space-y-8 fade-in-up">
+      <div className="flex-1 overflow-auto px-6 py-6 space-y-8 page-enter">
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {stats.map((s) => (
-            <div key={s.label} className="rounded-xl border border-border/50 bg-card p-5">
+          {stats.map((s, i) => (
+            <div key={s.label} className="rounded-xl border border-border/50 bg-card p-5 stagger-card" style={{ animationDelay: `${i * 50}ms` }}>
               <div className="flex items-center justify-between">
                 <span className="text-3xl font-heading font-bold text-primary">{s.value}</span>
                 <s.icon className="h-5 w-5 text-muted-foreground/40" />
@@ -91,7 +91,7 @@ const DashboardHome = () => {
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-52 rounded-xl border border-border/50 bg-card animate-pulse" />
+                <div key={i} className="h-52 rounded-xl border border-border/50 skeleton-shimmer" />
               ))}
             </div>
           ) : projects.length === 0 ? (
@@ -106,10 +106,10 @@ const DashboardHome = () => {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {projects.map((p) => (
-                <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30">
+                <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30 stagger-card">
                   <div className="h-32 bg-secondary/50 flex items-center justify-center overflow-hidden">
                     {p.thumbnail ? (
-                      <img src={p.thumbnail} alt={p.name} className="w-full h-full object-cover" />
+                      <img src={p.thumbnail} alt={p.name} className="w-full h-full object-cover image-hover" loading="lazy" />
                     ) : (
                       <Diamond className="h-8 w-8 text-muted-foreground/20" />
                     )}

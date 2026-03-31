@@ -1,4 +1,5 @@
-import { Diamond, LayoutGrid, FolderOpen, Settings, LogOut } from "lucide-react";
+import { useState } from "react";
+import { Diamond, LayoutGrid, FolderOpen, Settings, LogOut, Menu, X } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -14,6 +15,7 @@ const navItems = [
 const DashboardSidebar = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -28,12 +30,21 @@ const DashboardSidebar = () => {
     .toUpperCase()
     .slice(0, 2);
 
-  return (
-    <aside className="hidden md:flex w-60 flex-col border-r border-border/50 bg-[hsl(0_0%_6%)]">
+  const sidebarContent = (
+    <>
       {/* Logo */}
-      <div className="flex items-center gap-2 px-5 py-5">
-        <Diamond className="h-5 w-5 text-primary" />
-        <span className="font-heading text-lg font-bold text-primary">LustreAI</span>
+      <div className="flex items-center justify-between px-5 py-5">
+        <div className="flex items-center gap-2">
+          <Diamond className="h-5 w-5 text-primary" />
+          <span className="font-heading text-lg font-bold text-primary">LustreAI</span>
+        </div>
+        {/* Mobile close button */}
+        <button
+          className="md:hidden text-muted-foreground hover:text-foreground"
+          onClick={() => setMobileOpen(false)}
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Nav */}
@@ -45,6 +56,7 @@ const DashboardSidebar = () => {
             end={item.to === "/dashboard"}
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             activeClassName="bg-secondary text-foreground border-l-2 border-primary font-medium"
+            onClick={() => setMobileOpen(false)}
           >
             <item.icon className="h-4 w-4" />
             <span>{item.label}</span>
@@ -66,7 +78,41 @@ const DashboardSidebar = () => {
           </Button>
         </div>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile hamburger button */}
+      <button
+        className="md:hidden fixed top-4 left-4 z-50 flex h-10 w-10 items-center justify-center rounded-lg bg-card border border-border/50 text-foreground"
+        onClick={() => setMobileOpen(true)}
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
+      {/* Mobile overlay */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Mobile sidebar */}
+      <aside
+        className={`md:hidden fixed inset-y-0 left-0 z-50 w-60 flex flex-col border-r border-border/50 bg-[hsl(0_0%_6%)] transform transition-transform duration-300 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        {sidebarContent}
+      </aside>
+
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-60 flex-col border-r border-border/50 bg-[hsl(0_0%_6%)]">
+        {sidebarContent}
+      </aside>
+    </>
   );
 };
 

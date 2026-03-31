@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import { Plus, Search, Diamond, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ const DashboardProjects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [renameTarget, setRenameTarget] = useState<Project | null>(null);
@@ -45,11 +46,17 @@ const DashboardProjects = () => {
 
   useEffect(() => { fetchProjects(); }, [user]);
 
-  const filtered = projects.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const filtered = useMemo(() => projects.filter((p) => {
+    const matchSearch = p.name.toLowerCase().includes(debouncedSearch.toLowerCase());
     const matchFilter = filter === "all" || p.status === filter;
     return matchSearch && matchFilter;
-  });
+  }), [projects, debouncedSearch, filter]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -79,7 +86,7 @@ const DashboardProjects = () => {
         </Button>
       </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6 space-y-6 fade-in-up">
+      <div className="flex-1 overflow-auto px-6 py-6 space-y-6 page-enter">
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -102,7 +109,7 @@ const DashboardProjects = () => {
         {/* Grid */}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => <div key={i} className="h-52 rounded-xl border border-border/50 bg-card animate-pulse" />)}
+            {[1, 2, 3].map((i) => <div key={i} className="h-52 rounded-xl border border-border/50 skeleton-shimmer" />)}
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-card py-20">
@@ -116,7 +123,7 @@ const DashboardProjects = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((p) => (
-              <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30">
+              <div key={p.id} className="group rounded-xl border border-border/50 bg-card overflow-hidden transition-all hover:border-primary/30 stagger-card">
                 <div className="h-32 bg-secondary/50 flex items-center justify-center">
                   <Diamond className="h-8 w-8 text-muted-foreground/20" />
                 </div>

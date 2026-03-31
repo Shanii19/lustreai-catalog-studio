@@ -28,6 +28,7 @@ const MAX_SIZE = 20 * 1024 * 1024;
 const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages }: Props) => {
   const { user } = useAuth();
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback((newFiles: FileList | File[]) => {
@@ -49,8 +50,19 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
     });
   };
 
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    setIsDragOver(false);
     addFiles(e.dataTransfer.files);
   }, [addFiles]);
 
@@ -109,18 +121,25 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
   };
 
   return (
-    <div className="flex-1 overflow-auto px-6 py-6 space-y-6 fade-in-up">
+    <div className="flex-1 overflow-auto px-6 py-6 space-y-6 page-enter">
       {/* Drop zone */}
       <div
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-primary/40 bg-card py-16 transition-colors hover:border-primary/70 cursor-pointer"
+        className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-card py-16 transition-all cursor-pointer ${
+          isDragOver
+            ? "drop-zone-active border-primary bg-primary/5"
+            : "border-primary/40 hover:border-primary/70"
+        }`}
         onClick={() => inputRef.current?.click()}
       >
-        <Upload className="mb-3 h-10 w-10 text-primary/50" />
-        <p className="font-heading text-lg font-semibold text-foreground">Drag & drop your jewelry images</p>
+        <Upload className={`mb-3 h-10 w-10 transition-colors ${isDragOver ? "text-primary" : "text-primary/50"}`} />
+        <p className="font-heading text-lg font-semibold text-foreground">
+          {isDragOver ? "Drop your images here" : "Drag & drop your jewelry images"}
+        </p>
         <p className="mt-1 text-sm text-muted-foreground">JPG, PNG, or WEBP — up to 20MB each</p>
-        <Button variant="outline" className="mt-4 gap-2 border-primary/40 hover:border-primary hover:text-primary" onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}>
+        <Button variant="outline" className="mt-4 gap-2 border-primary/40 hover:border-primary hover:text-primary gold-glow-hover" onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}>
           <ImagePlus className="h-4 w-4" /> Browse Files
         </Button>
         <input ref={inputRef} type="file" accept=".jpg,.jpeg,.png,.webp" multiple className="hidden" onChange={(e) => e.target.files && addFiles(e.target.files)} />
@@ -132,12 +151,12 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
           <h3 className="font-heading text-sm font-semibold text-muted-foreground">Selected Files</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {files.map((f, i) => (
-              <div key={i} className="flex items-center gap-3 rounded-lg border border-border/50 bg-card p-3">
-                <img src={f.preview} alt="" className="h-14 w-14 rounded-md object-cover" />
+              <div key={i} className="flex items-center gap-3 rounded-lg border border-border/50 bg-card p-3 stagger-card">
+                <img src={f.preview} alt="" className="h-14 w-14 rounded-md object-cover" loading="lazy" />
                 <div className="flex-1 min-w-0 space-y-1">
                   <p className="truncate text-sm font-medium">{f.file.name}</p>
                   <p className="text-xs text-muted-foreground">{formatSize(f.file.size)}</p>
-                  {f.uploading && <Progress value={f.progress} className="h-1.5 [&>div]:bg-primary" />}
+                  {f.uploading && <Progress value={f.progress} className="h-1.5 progress-smooth [&>div]:bg-primary" />}
                   {f.done && <p className="text-xs text-emerald-400">Uploaded ✓</p>}
                 </div>
                 {!f.uploading && !f.done && (
@@ -162,8 +181,8 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
           <h3 className="font-heading text-sm font-semibold text-muted-foreground">Uploaded Images</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {uploadedImages.map((img) => (
-              <div key={img.id} className="relative group rounded-lg border border-border/50 bg-card overflow-hidden">
-                <img src={img.url} alt={img.name} className="h-36 w-full object-cover" />
+              <div key={img.id} className="relative group rounded-lg border border-border/50 bg-card overflow-hidden stagger-card">
+                <img src={img.url} alt={img.name} className="h-36 w-full object-cover image-hover" loading="lazy" />
                 <div className="p-2 flex items-center justify-between">
                   <p className="truncate text-xs text-muted-foreground">{img.name}</p>
                   <button onClick={() => removeUploaded(img.id)} className="text-muted-foreground hover:text-destructive">

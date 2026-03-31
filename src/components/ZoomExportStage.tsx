@@ -171,7 +171,7 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                   <div key={shot.id} className="group relative rounded-lg overflow-hidden border border-border/50">
                     {shot.done ? (
                       <>
-                        <img src={shot.url} alt={shot.angle} className="w-full aspect-square object-cover" />
+                        <img src={shot.url} alt={shot.angle} className="w-full aspect-square object-cover image-hover" loading="lazy" />
                         <Badge className="absolute top-2 left-2 bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5">4K</Badge>
                         <div className="absolute bottom-0 inset-x-0 bg-background/80 px-2 py-1.5 text-center">
                           <span className="text-[11px] font-medium">{shot.angle}</span>
@@ -190,7 +190,7 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                             <span>{shot.angle}</span>
                             <span className="font-heading font-bold text-primary">{shot.progress}%</span>
                           </div>
-                          <Progress value={shot.progress} className="h-1 [&>div]:bg-primary" />
+                          <Progress value={shot.progress} className="h-1 progress-smooth [&>div]:bg-primary" />
                         </div>
                       </div>
                     )}

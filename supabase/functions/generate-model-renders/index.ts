@@ -71,6 +71,7 @@ async function generateModelImage(
     },
     body: JSON.stringify({
       model: MODEL,
+      modalities: ['image', 'text'],
       messages: [
         {
           role: 'user',

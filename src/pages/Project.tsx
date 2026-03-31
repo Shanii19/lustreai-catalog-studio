@@ -7,8 +7,17 @@ import EnhanceStage from "@/components/EnhanceStage";
 import ModelRenderStage from "@/components/ModelRenderStage";
 import ZoomExportStage from "@/components/ZoomExportStage";
 import ProjectComplete from "@/components/ProjectComplete";
+import ProcessingSummaryBar from "@/components/ProcessingSummaryBar";
+import { useProcessingStatus } from "@/hooks/useProcessingStatus";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+const STAGE_JOB_MAP = {
+  1: "enhance",
+  2: "model_render",
+  3: "zoom",
+} as const;
 
 const Project = () => {
   const { id } = useParams<{ id: string }>();
@@ -18,14 +27,14 @@ const Project = () => {
   const [uploadedImages, setUploadedImages] = useState<{ id: string; url: string; name: string }[]>([]);
   const [showComplete, setShowComplete] = useState(false);
 
+  const { jobs, summary, retryJob, getJobsByType } = useProcessingStatus(id);
+
   useEffect(() => {
     if (!id) return;
-    // Fetch project name
     supabase.from("projects").select("name").eq("id", id).single().then(({ data }) => {
       if (data) setProjectName(data.name);
       setLoading(false);
     });
-    // Fetch existing images
     supabase
       .from("project_images")
       .select("id, storage_url")
@@ -43,6 +52,18 @@ const Project = () => {
       });
   }, [id]);
 
+  const handleUploadComplete = () => {
+    toast.success("Upload complete — starting enhancement");
+    setStage(1);
+  };
+
+  const handleRetry = async (imageId: string, jobType: "enhance" | "model_render" | "zoom") => {
+    await retryJob(imageId, jobType);
+    toast.info("Job re-queued");
+  };
+
+  const currentJobType = STAGE_JOB_MAP[stage as keyof typeof STAGE_JOB_MAP];
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -55,21 +76,26 @@ const Project = () => {
     <div className="flex min-h-screen bg-background">
       <DashboardSidebar />
       <main className="flex-1 flex flex-col min-h-screen">
-        {/* Project header */}
         <header className="flex items-center justify-between border-b border-border/50 px-6 py-4">
           <div>
             <h1 className="font-heading text-xl font-bold">{projectName || "Project"}</h1>
           </div>
         </header>
 
-        {/* Stage bar */}
         <StageProgressBar current={stage} />
 
-        {/* Stage content */}
+        {/* Processing summary bar */}
+        {currentJobType && (
+          <ProcessingSummaryBar
+            summary={summary(currentJobType)}
+            jobType={currentJobType}
+          />
+        )}
+
         {stage === 0 && (
           <UploadStage
             projectId={id!}
-            onComplete={() => setStage(1)}
+            onComplete={handleUploadComplete}
             uploadedImages={uploadedImages}
             setUploadedImages={setUploadedImages}
           />
@@ -77,25 +103,31 @@ const Project = () => {
         {stage === 1 && (
           <EnhanceStage
             images={uploadedImages}
-            onComplete={() => setStage(2)}
+            onComplete={() => { toast.success("Enhancement complete"); setStage(2); }}
+            jobs={getJobsByType("enhance")}
+            onRetry={(imageId) => handleRetry(imageId, "enhance")}
           />
         )}
         {stage === 2 && (
           <ModelRenderStage
             images={uploadedImages}
-            onComplete={() => setStage(3)}
+            onComplete={() => { toast.success("Model rendering complete"); setStage(3); }}
+            jobs={getJobsByType("model_render")}
+            onRetry={(imageId) => handleRetry(imageId, "model_render")}
           />
         )}
         {stage === 3 && !showComplete && (
           <ZoomExportStage
             images={uploadedImages}
             onComplete={async () => {
-              // Update project status to complete
               if (id) {
                 await supabase.from("projects").update({ status: "complete" }).eq("id", id);
               }
+              toast.success("Export ready!");
               setShowComplete(true);
             }}
+            jobs={getJobsByType("zoom")}
+            onRetry={(imageId) => handleRetry(imageId, "zoom")}
           />
         )}
         {showComplete && (

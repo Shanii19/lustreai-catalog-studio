@@ -27,6 +27,7 @@ const DashboardProjects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [renameTarget, setRenameTarget] = useState<Project | null>(null);

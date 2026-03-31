@@ -11,6 +11,7 @@ import Signup from "./pages/Signup";
 import DashboardLayout from "./components/DashboardLayout";
 import DashboardHome from "./pages/DashboardHome";
 import DashboardProjects from "./pages/DashboardProjects";
+import DashboardSettings from "./pages/DashboardSettings";
 import Project from "./pages/Project";
 import NotFound from "./pages/NotFound";
 

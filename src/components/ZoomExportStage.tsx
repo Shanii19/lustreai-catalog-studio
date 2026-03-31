@@ -190,7 +190,7 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                             <span>{shot.angle}</span>
                             <span className="font-heading font-bold text-primary">{shot.progress}%</span>
                           </div>
-                          <Progress value={shot.progress} className="h-1 [&>div]:bg-primary" />
+                          <Progress value={shot.progress} className="h-1 progress-smooth [&>div]:bg-primary" />
                         </div>
                       </div>
                     )}

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
+import { supabase } from "@/integrations/supabase/client";
 import type { ProcessingJob } from "@/hooks/useProcessingStatus";
 
 interface ImageItem {
@@ -21,16 +22,20 @@ interface ZoomShot {
   done: boolean;
 }
 
+const ANGLE_MAP: Record<string, string> = {
+  front: "Front View",
+  side: "Side Profile",
+  top: "Top-Down",
+  macro: "Macro Detail",
+};
 const ANGLES = ["Front View", "Side Profile", "Top-Down", "Macro Detail"];
-
-const generatePlaceholderUrl = (seed: number) =>
-  `https://picsum.photos/seed/${seed}/800/800`;
 
 interface Props {
   images: ImageItem[];
   onComplete: (zoomUrls: string[]) => void;
   jobs: ProcessingJob[];
   onRetry?: (imageId: string) => void;
+  projectId?: string;
 }
 
 const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
@@ -41,13 +46,86 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
   const hasRealJobs = jobs.length > 0;
 
+  // Fetch real zoom images from the database when jobs change
+  useEffect(() => {
+    if (!hasRealJobs) return;
+
+    const fetchZoomImages = async () => {
+      // Get project_id from the first job
+      const projectId = jobs[0]?.project_id;
+      if (!projectId) return;
+
+      const { data: zoomImages } = await supabase
+        .from("project_images")
+        .select("id, storage_url, metadata")
+        .eq("project_id", projectId)
+        .eq("type", "zoom");
+
+      // Build shots from real data + job progress
+      const newShots: Record<string, ZoomShot[]> = {};
+
+      images.forEach((img) => {
+        const job = jobs.find((j) => j.image_id === img.id && j.job_type === "zoom");
+        const imgZooms = (zoomImages || []).filter(
+          (z) => (z.metadata as any)?.jewelry_image_id === img.id
+        );
+
+        // Map each angle
+        newShots[img.id] = ["front", "side", "top", "macro"].map((angleKey, ai) => {
+          const found = imgZooms.find((z) => (z.metadata as any)?.angle === angleKey);
+          const angleName = ANGLE_MAP[angleKey] || angleKey;
+
+          if (found) {
+            return {
+              id: found.id,
+              url: found.storage_url,
+              angle: angleName,
+              progress: 100,
+              done: true,
+            };
+          }
+
+          // Not yet generated — use job progress
+          const jobProgress = job?.progress || 0;
+          const perAngleProgress = Math.max(0, Math.min(100,
+            Math.round((jobProgress - ai * 25) * 4)
+          ));
+
+          return {
+            id: `${img.id}-zoom-${ai}`,
+            url: "",
+            angle: angleName,
+            progress: Math.max(0, Math.min(99, perAngleProgress)),
+            done: false,
+          };
+        });
+      });
+
+      setShots(newShots);
+    };
+
+    fetchZoomImages();
+
+    // Poll every 3 seconds while any job is still processing
+    const hasProcessing = jobs.some((j) => j.job_type === "zoom" && (j.status === "processing" || j.status === "queued"));
+    let interval: NodeJS.Timeout | undefined;
+    if (hasProcessing) {
+      interval = setInterval(fetchZoomImages, 3000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [images, jobs, hasRealJobs]);
+
+  // Fake simulation fallback when no real jobs
   useEffect(() => {
     if (hasRealJobs) return;
     const initial: Record<string, ZoomShot[]> = {};
     images.forEach((img, imgIdx) => {
       initial[img.id] = ANGLES.map((angle, ai) => ({
         id: `${img.id}-zoom-${ai}`,
-        url: generatePlaceholderUrl(imgIdx * 200 + ai * 53 + 7),
+        url: `https://picsum.photos/seed/${imgIdx * 200 + ai * 53 + 7}/800/800`,
         angle,
         progress: 0,
         done: false,
@@ -88,7 +166,7 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
   const allDone = images.length > 0 && images.every((img) => {
     const job = getJobStatus(img.id);
     if (job?.status === "failed") return true;
-    return (shots[img.id] || []).every((s) => s.done);
+    return (shots[img.id] || []).length > 0 && (shots[img.id] || []).every((s) => s.done);
   });
 
   const totalReady = Object.values(shots).flat().filter((s) => s.done).length;

@@ -13,6 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 4
 const RETRY_DELAYS = [5000, 10000, 20000, 30000]
+const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview'
 
 interface RequestBody {
   enhanced_image_url: string
@@ -28,7 +29,10 @@ const VARIANT_PROMPTS = [
 ]
 
 const BASE_PROMPT =
-  'A beautiful Asian female model wearing elegant jewelry, professional studio lighting, clean white background, high fashion photography, photorealistic, 8k'
+  'A photorealistic Asian female fashion model wearing the exact jewelry from the reference image on her real neck and chest, professional studio lighting, luxury editorial fashion photography, clean premium background, ultra-detailed'
+
+const WEARING_GUARDRAIL =
+  'The final output must show a real human model clearly wearing the exact necklace from the reference image. Do not generate a standalone product shot, isolated jewelry, floating necklace, mannequin, bust display, or empty background with only the jewelry. Preserve the exact pendant shape, gemstone colors, chain structure, and ornament placement from the reference.'
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -48,7 +52,7 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
 
 // Provider 1: Lovable AI Gateway
 async function generateWithLovable(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string }> {
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. The model should be wearing the exact jewelry shown in the reference image. Generate a photorealistic fashion photograph.`
+  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} Generate a photorealistic fashion photograph where the jewelry is naturally draped and proportionally correct on the model.`
 
   const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
@@ -86,13 +90,16 @@ async function generateWithLovable(imageBase64: string, promptSuffix: string): P
 async function generateWithGemini(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string }> {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
 
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. The model should be wearing the exact jewelry shown in the reference image. Generate a photorealistic fashion photograph.`
+  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} Generate a photorealistic fashion photograph where the model is visibly wearing the necklace.`
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': GEMINI_API_KEY,
+      },
       body: JSON.stringify({
         contents: [{
           parts: [
@@ -121,7 +128,7 @@ async function generateWithGemini(imageBase64: string, promptSuffix: string): Pr
 async function generateWithStability(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string }> {
   if (!STABILITY_API_KEY) throw new Error('Stability_API_KEY not configured')
 
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. The model should be wearing elegant jewelry. Photorealistic fashion photograph.`
+  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} The necklace must be on the model's neck, not shown alone. Photorealistic fashion photograph.`
 
   const binaryStr = atob(imageBase64)
   const bytes = new Uint8Array(binaryStr.length)
@@ -160,8 +167,8 @@ async function generateWithStability(imageBase64: string, promptSuffix: string):
 
 async function generateWithFallback(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string }> {
   const providers = [
-    { name: 'Lovable AI', fn: () => generateWithLovable(imageBase64, promptSuffix) },
     { name: 'Gemini Direct', fn: () => generateWithGemini(imageBase64, promptSuffix) },
+    { name: 'Lovable AI', fn: () => generateWithLovable(imageBase64, promptSuffix) },
     { name: 'Stability AI', fn: () => generateWithStability(imageBase64, promptSuffix) },
   ]
 

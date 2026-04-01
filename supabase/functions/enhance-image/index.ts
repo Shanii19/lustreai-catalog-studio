@@ -11,8 +11,8 @@ const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 4
-const RETRY_DELAYS = [5000, 10000, 20000, 30000]
+const MAX_RETRIES = 1
+const RETRY_DELAYS = [3000, 5000]
 
 interface RequestBody {
   image_url: string
@@ -152,8 +152,7 @@ async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64:
   ]
 
   for (const provider of providers) {
-    // For Gemini, retry up to 3 times on rate limit with increasing delays
-    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 3 : 1
+    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 2 : 1
     for (let rlAttempt = 0; rlAttempt < maxRateLimitRetries; rlAttempt++) {
       try {
         console.log(`Trying ${provider.name}${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
@@ -164,12 +163,12 @@ async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64:
         const msg = error instanceof Error ? error.message : String(error)
         console.warn(`❌ ${provider.name} failed: ${msg}`)
         if (msg === 'RATE_LIMITED' && rlAttempt < maxRateLimitRetries - 1) {
-          const rlDelay = 15000 * (rlAttempt + 1) // 15s, 30s, 45s
+          const rlDelay = 5000 * (rlAttempt + 1)
           console.log(`Rate limited, waiting ${rlDelay / 1000}s before retry...`)
           await sleep(rlDelay)
           continue
         }
-        break // move to next provider
+        break
       }
     }
   }

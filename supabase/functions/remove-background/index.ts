@@ -144,8 +144,8 @@ async function removeWithStability(imageBase64: string): Promise<{ image_base64:
 
 async function removeWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
-    { name: 'Lovable AI', fn: () => removeWithLovable(imageBase64) },
     { name: 'Gemini Direct', fn: () => removeWithGemini(imageBase64) },
+    { name: 'Lovable AI', fn: () => removeWithLovable(imageBase64) },
     { name: 'Stability AI', fn: () => removeWithStability(imageBase64) },
   ]
 

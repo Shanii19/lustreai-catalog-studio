@@ -13,7 +13,7 @@ const MAX_RETRIES = 4
 const RETRY_DELAYS = [5000, 10000, 20000, 30000]
 
 interface RequestBody {
-  jewelry_image_url: string
+  jewelry_image_url: string  // Now receives the selected model render URL
   project_id: string
   image_id: string
   user_id: string

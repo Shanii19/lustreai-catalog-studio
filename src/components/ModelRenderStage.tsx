@@ -17,9 +17,15 @@ interface ModelVariant {
   done: boolean;
 }
 
+interface SelectedModel {
+  imageId: string;
+  modelUrl: string;
+  modelImageDbId: string;
+}
+
 interface Props {
   images: ImageItem[];
-  onComplete: () => void;
+  onComplete: (selectedModels: SelectedModel[]) => void;
   jobs: ProcessingJob[];
   onRetry?: (imageId: string) => void;
 }

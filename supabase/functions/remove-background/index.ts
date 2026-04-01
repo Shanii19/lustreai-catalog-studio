@@ -11,8 +11,8 @@ const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 4
-const RETRY_DELAYS = [5000, 10000, 20000, 30000]
+const MAX_RETRIES = 1
+const RETRY_DELAYS = [3000, 5000]
 
 interface RequestBody {
   image_url: string

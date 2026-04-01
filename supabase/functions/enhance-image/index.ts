@@ -76,7 +76,7 @@ async function enhanceWithGemini(imageBase64: string): Promise<{ image_base64: s
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -146,8 +146,8 @@ async function enhanceWithStability(imageBase64: string): Promise<{ image_base64
 // Try all providers in order
 async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
-    { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
     { name: 'Gemini Direct', fn: () => enhanceWithGemini(imageBase64) },
+    { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
     { name: 'Stability AI', fn: () => enhanceWithStability(imageBase64) },
   ]
 

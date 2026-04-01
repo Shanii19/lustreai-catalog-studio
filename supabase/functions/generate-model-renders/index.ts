@@ -13,7 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 4
 const RETRY_DELAYS = [5000, 10000, 20000, 30000]
-const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-preview-image-generation'
+const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image'
 
 interface RequestBody {
   enhanced_image_url: string

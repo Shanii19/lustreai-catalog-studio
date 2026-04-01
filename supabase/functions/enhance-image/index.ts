@@ -224,7 +224,7 @@ async function enhanceWithIdeogram(sourceImage: SourceImage): Promise<{ image_ba
   fd.append('image_file', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('image_request', JSON.stringify({
     prompt: 'Enhance this jewelry product photo: professional studio lighting, sharper details, vibrant colors, clean background. Keep the jewelry identical.',
-    model: 'V_3_TURBO',
+    model: 'V_3',
     magic_prompt_option: 'AUTO',
     style_type: 'REALISTIC',
   }))

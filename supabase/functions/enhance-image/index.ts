@@ -141,8 +141,19 @@ async function enhanceWithGemini(sourceImage: SourceImage, overrideKey?: string 
   )
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (!response.ok) throw new Error(`Gemini error ${response.status}`)
-  const result = await response.json()
-  const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
+  const result = await response.json() as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: {
+            mimeType?: string
+            data?: string
+          }
+        }>
+      }
+    }>
+  }
+  const imagePart = result.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.mimeType?.startsWith('image/'))
   if (imagePart?.inlineData?.data) return { image_base64: imagePart.inlineData.data }
   return { image_base64: sourceImage.base64 }
 }

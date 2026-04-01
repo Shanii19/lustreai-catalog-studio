@@ -8,8 +8,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 1
+const MAX_RETRIES = 0
 const RETRY_DELAYS = [3000, 5000]
+
+interface SourceImage {
+  base64: string
+  mimeType: string
+}
 
 interface RequestBody {
   image_url: string
@@ -22,14 +27,47 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchImageAsBase64(imageUrl: string): Promise<string> {
+function normalizeMimeType(contentType: string | null): string {
+  const mimeType = contentType?.split(';')[0]?.trim().toLowerCase()
+  if (!mimeType?.startsWith('image/')) return 'image/png'
+  return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType
+}
+
+function fileNameForMimeType(mimeType: string): string {
+  if (mimeType === 'image/jpeg') return 'image.jpeg'
+  if (mimeType === 'image/webp') return 'image.webp'
+  return 'image.png'
+}
+
+function toDataUrl(sourceImage: SourceImage): string {
+  return `data:${sourceImage.mimeType};base64,${sourceImage.base64}`
+}
+
+function summarizeProviderErrors(errors: string[]): string {
+  const deduped = new Map<string, string>()
+
+  for (const entry of errors) {
+    const separatorIndex = entry.indexOf(':')
+    const provider = separatorIndex === -1 ? entry : entry.slice(0, separatorIndex)
+    const message = separatorIndex === -1 ? 'Unknown error' : entry.slice(separatorIndex + 1).trim()
+
+    if (!deduped.has(provider)) deduped.set(provider, message)
+  }
+
+  return Array.from(deduped.entries()).map(([provider, message]) => `${provider}: ${message}`).join('; ')
+}
+
+async function fetchImageAsBase64(imageUrl: string): Promise<SourceImage> {
   const resp = await fetch(imageUrl)
   if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
   const arrayBuffer = await resp.arrayBuffer()
   const bytes = new Uint8Array(arrayBuffer)
   let binary = ''
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
+  return {
+    base64: btoa(binary),
+    mimeType: normalizeMimeType(resp.headers.get('content-type')),
+  }
 }
 
 function base64ToBlob(b64: string, mime = 'image/png'): Blob {
@@ -49,7 +87,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 const ENHANCE_PROMPT = 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.'
 
 // --- Provider 1: Gemini Direct ---
-async function enhanceWithGemini(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithGemini(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('GEMINI_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
@@ -61,7 +99,7 @@ async function enhanceWithGemini(imageBase64: string): Promise<{ image_base64: s
       body: JSON.stringify({
         contents: [{ parts: [
           { text: ENHANCE_PROMPT },
-          { inlineData: { mimeType: 'image/png', data: imageBase64 } },
+          { inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64 } },
         ]}],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
@@ -72,11 +110,11 @@ async function enhanceWithGemini(imageBase64: string): Promise<{ image_base64: s
   const result = await response.json()
   const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
   if (imagePart?.inlineData?.data) return { image_base64: imagePart.inlineData.data }
-  return { image_base64: imageBase64 }
+  return { image_base64: sourceImage.base64 }
 }
 
 // --- Provider 2: Lovable AI Gateway ---
-async function enhanceWithLovable(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithLovable(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('LOVABLE_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
@@ -87,7 +125,7 @@ async function enhanceWithLovable(imageBase64: string): Promise<{ image_base64: 
       model: 'google/gemini-2.5-flash-image',
       messages: [{ role: 'user', content: [
         { type: 'text', text: ENHANCE_PROMPT },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+        { type: 'image_url', image_url: { url: toDataUrl(sourceImage) } },
       ]}],
       modalities: ['image', 'text'],
     }),
@@ -98,20 +136,19 @@ async function enhanceWithLovable(imageBase64: string): Promise<{ image_base64: 
   const result = await response.json()
   const dataUrl = result.choices?.[0]?.message?.images?.[0]?.image_url?.url
   if (dataUrl) return { image_base64: (dataUrl as string).replace(/^data:image\/\w+;base64,/, '') }
-  return { image_base64: imageBase64 }
+  return { image_base64: sourceImage.base64 }
 }
 
 // --- Provider 3: OpenAI Image Edit ---
-async function enhanceWithOpenAI(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithOpenAI(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('OpenAI_Image_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const fd = new FormData()
-  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('prompt', ENHANCE_PROMPT)
   fd.append('model', 'gpt-image-1')
   fd.append('size', '1024x1024')
-  fd.append('response_format', 'b64_json')
 
   const response = await fetch('https://api.openai.com/v1/images/edits', {
     method: 'POST',
@@ -120,32 +157,33 @@ async function enhanceWithOpenAI(imageBase64: string): Promise<{ image_base64: s
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`OpenAI error ${response.status}`)
+  if (!response.ok) throw new Error(`OpenAI error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
   if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json }
   throw new Error('OpenAI returned no image')
 }
 
 // --- Provider 4: Grok (xAI) ---
-async function enhanceWithGrok(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithGrok(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('GROK_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+  const response = await fetch('https://api.x.ai/v1/images/edits', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'grok-2-image',
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: ENHANCE_PROMPT },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
-      ]}],
+      model: 'grok-imagine-image',
+      prompt: ENHANCE_PROMPT,
+      image: { url: toDataUrl(sourceImage) },
+      response_format: 'b64_json',
     }),
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (!response.ok) throw new Error(`Grok error ${response.status}`)
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Grok error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
-  const url = result.choices?.[0]?.message?.content?.find?.((c: any) => c.type === 'image_url')?.image_url?.url
+  if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json }
+  const url = result.data?.[0]?.url
   if (url) {
     if (url.startsWith('data:')) return { image_base64: url.replace(/^data:image\/\w+;base64,/, '') }
     const imgResp = await fetch(url)
@@ -155,12 +193,12 @@ async function enhanceWithGrok(imageBase64: string): Promise<{ image_base64: str
 }
 
 // --- Provider 5: Stability AI ---
-async function enhanceWithStability(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithStability(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('Stability_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const fd = new FormData()
-  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('prompt', 'Enhance jewelry product image with professional studio lighting, sharpen details, increase clarity and vibrancy.')
   fd.append('output_format', 'png')
   fd.append('mode', 'image-to-image')
@@ -173,17 +211,17 @@ async function enhanceWithStability(imageBase64: string): Promise<{ image_base64
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Stability error ${response.status}`)
+  if (!response.ok) throw new Error(`Stability error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   return { image_base64: arrayBufferToBase64(await response.arrayBuffer()) }
 }
 
 // --- Provider 6: Ideogram v3 Turbo ---
-async function enhanceWithIdeogram(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithIdeogram(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const key = Deno.env.get('ideogram_v3_turbo_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const fd = new FormData()
-  fd.append('image_file', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image_file', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('image_request', JSON.stringify({
     prompt: 'Enhance this jewelry product photo: professional studio lighting, sharper details, vibrant colors, clean background. Keep the jewelry identical.',
     model: 'V_3_TURBO',
@@ -198,7 +236,7 @@ async function enhanceWithIdeogram(imageBase64: string): Promise<{ image_base64:
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Ideogram error ${response.status}`)
+  if (!response.ok) throw new Error(`Ideogram error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
   const imgUrl = result.data?.[0]?.url
   if (imgUrl) {
@@ -280,17 +318,14 @@ async function enhanceWithFlux(imageBase64: string): Promise<{ image_base64: str
 }
 
 // === Fallback chain ===
-async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
+async function enhanceWithFallback(sourceImage: SourceImage): Promise<{ image_base64: string }> {
   const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
-    { name: 'Gemini Direct', fn: () => enhanceWithGemini(imageBase64) },
-    { name: 'OpenAI', fn: () => enhanceWithOpenAI(imageBase64) },
-    { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
-    { name: 'Grok (xAI)', fn: () => enhanceWithGrok(imageBase64) },
-    { name: 'Ideogram', fn: () => enhanceWithIdeogram(imageBase64) },
-    { name: 'Stability AI', fn: () => enhanceWithStability(imageBase64) },
-    { name: 'Imagen 4', fn: () => enhanceWithImagen(imageBase64) },
-    { name: 'Flux', fn: () => enhanceWithFlux(imageBase64) },
-    { name: 'Hugging Face', fn: () => enhanceWithHuggingFace(imageBase64) },
+    { name: 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage) },
+    { name: 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage) },
+    { name: 'Grok (xAI)', fn: () => enhanceWithGrok(sourceImage) },
+    { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
+    { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
+    { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]
 
   const errors: string[] = []
@@ -316,13 +351,13 @@ async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64:
       }
     }
   }
-  throw new Error(`All providers failed: ${errors.join('; ')}`)
+  throw new Error(`All providers failed: ${summarizeProviderErrors(errors)}`)
 }
 
-async function enhanceWithRetry(imageBase64: string, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
+async function enhanceWithRetry(sourceImage: SourceImage, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await enhanceWithFallback(imageBase64)
+      return await enhanceWithFallback(sourceImage)
     } catch (error) {
       if (attempt < retries) {
         const delay = RETRY_DELAYS[attempt] || 30000
@@ -338,8 +373,8 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
-    const imageBase64 = await fetchImageAsBase64(imageUrl)
-    const result = await enhanceWithRetry(imageBase64)
+    const sourceImage = await fetchImageAsBase64(imageUrl)
+    const result = await enhanceWithRetry(sourceImage)
     await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', jobId)
 
     const storagePath = `${userId}/${projectId}/enhanced/enhanced_${imageId}.png`

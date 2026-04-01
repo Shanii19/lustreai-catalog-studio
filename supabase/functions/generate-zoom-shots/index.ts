@@ -13,17 +13,17 @@ const MAX_RETRIES = 4
 const RETRY_DELAYS = [5000, 10000, 20000, 30000]
 
 interface RequestBody {
-  jewelry_image_url: string
+  jewelry_image_url: string  // Now receives the selected model render URL
   project_id: string
   image_id: string
   user_id: string
 }
 
 const ZOOM_SHOTS = [
-  { angle: 'front', prompt: 'Ultra high resolution macro photo of the jewelry from the front, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography' },
-  { angle: 'side', prompt: 'Ultra high resolution macro photo of the jewelry from side profile angle, 4K, extreme detail, studio lighting, sharp focus on texture and gemstones, clean white background, professional product photography' },
-  { angle: 'top', prompt: 'Ultra high resolution macro photo of the jewelry from top-down flat lay angle, 4K, extreme detail, white marble surface, studio lighting, sharp focus on craftsmanship details, professional product photography' },
-  { angle: 'macro', prompt: "Extreme macro close-up of the jewelry craftsmanship detail, 4K, bokeh background, jeweler's loupe perspective, ultra sharp focus on gemstone facets and metalwork, professional product photography" },
+  { angle: 'front', prompt: 'Ultra high resolution 4K front-facing close-up of this exact model wearing the jewelry, capturing every detail of the jewelry piece, the model\'s skin texture, and styling. Studio lighting, sharp focus, clean background, professional fashion photography' },
+  { angle: 'side', prompt: 'Ultra high resolution 4K side profile close-up of this exact model wearing the jewelry, showing the jewelry from a side angle on the model. Studio lighting, sharp focus, clean background, professional fashion photography' },
+  { angle: 'top', prompt: 'Ultra high resolution 4K three-quarter angle shot of this exact model wearing the jewelry, showing both the model and jewelry in detail. Studio lighting, sharp focus, clean background, professional fashion photography' },
+  { angle: 'macro', prompt: 'Extreme macro close-up of the jewelry as worn by this model, focusing on gemstone facets, metalwork details, and how the jewelry sits on the model. 4K, bokeh background, ultra sharp focus, professional product photography' },
 ]
 
 async function sleep(ms: number) {
@@ -57,7 +57,7 @@ async function generateZoomImage(
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail faithfully. Generate a photorealistic 4K product photograph.` },
+          { type: 'text', text: `${prompt}. Use the provided model image as the exact reference — reproduce the model and jewelry faithfully. Generate a photorealistic 4K fashion photograph.` },
           { type: 'image_url', image_url: { url: `data:image/png;base64,${jewelryImageBase64}` } },
         ],
       }],

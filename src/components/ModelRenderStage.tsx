@@ -17,9 +17,15 @@ interface ModelVariant {
   done: boolean;
 }
 
+interface SelectedModel {
+  imageId: string;
+  modelUrl: string;
+  modelImageDbId: string;
+}
+
 interface Props {
   images: ImageItem[];
-  onComplete: () => void;
+  onComplete: (selectedModels: SelectedModel[]) => void;
   jobs: ProcessingJob[];
   onRetry?: (imageId: string) => void;
 }
@@ -261,7 +267,19 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
       {allSelected && (
         <div className="flex justify-end pt-2">
-          <Button onClick={onComplete} size="lg" className="gap-2 gold-glow-hover">
+          <Button onClick={() => {
+            const selectedModels: SelectedModel[] = images
+              .filter((img) => selections[img.id])
+              .map((img) => {
+                const variant = (models[img.id] || []).find((v) => v.id === selections[img.id]);
+                return {
+                  imageId: img.id,
+                  modelUrl: variant?.url || "",
+                  modelImageDbId: variant?.id || "",
+                };
+              });
+            onComplete(selectedModels);
+          }} size="lg" className="gap-2 gold-glow-hover">
             <ZoomIn className="h-4 w-4" /> Generate 4K Zoom Shots →
           </Button>
         </div>

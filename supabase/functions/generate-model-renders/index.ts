@@ -173,7 +173,7 @@ async function generateWithFallback(imageBase64: string, promptSuffix: string): 
   ]
 
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 3 : 1
+    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 2 : 1
     for (let rlAttempt = 0; rlAttempt < maxRateLimitRetries; rlAttempt++) {
       try {
         console.log(`Trying ${provider.name}${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
@@ -184,7 +184,7 @@ async function generateWithFallback(imageBase64: string, promptSuffix: string): 
         const msg = error instanceof Error ? error.message : String(error)
         console.warn(`❌ ${provider.name} failed: ${msg}`)
         if (msg === 'RATE_LIMITED' && rlAttempt < maxRateLimitRetries - 1) {
-          const rlDelay = 15000 * (rlAttempt + 1)
+          const rlDelay = 5000 * (rlAttempt + 1)
           console.log(`Rate limited, waiting ${rlDelay / 1000}s before retry...`)
           await sleep(rlDelay)
           continue

@@ -36,8 +36,12 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
   const getStatus = (imageId: string) => {
     if (hasRealJobs) {
-      const job = jobs.find((j) => j.image_id === imageId && j.job_type === "enhance");
+      const job = [...jobs]
+        .filter((j) => j.image_id === imageId && j.job_type === "enhance")
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+
       if (!job) return { done: false, failed: false, progress: 0 };
+
       return {
         done: job.status === "complete",
         failed: job.status === "failed",

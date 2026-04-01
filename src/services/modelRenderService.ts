@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { runSequentialJobs } from "@/services/processingJobs";
 
 // TODO: The edge function handles the actual API calls server-side
 // Configure MODEL_GEN_API_KEY and MODEL_GEN_API_URL as backend secrets
@@ -54,27 +55,20 @@ export async function generateAllModelRenders(
   projectId: string,
   userId: string
 ): Promise<{ succeeded: number; failed: number }> {
-  const results = await Promise.allSettled(
-    images.map((img) =>
+  const { succeeded, failed } = await runSequentialJobs(
+    images,
+    (img) =>
       generateModelRenders({
         enhancedImageUrl: img.url,
         projectId,
         imageId: img.id,
         userId,
-      })
-    )
-  );
-
-  let succeeded = 0;
-  let failed = 0;
-
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value.success) {
-      succeeded++;
-    } else {
-      failed++;
+      }),
+    {
+      cooldownMs: 35_000,
+      timeoutMs: 240_000,
     }
-  }
+  );
 
   return { succeeded, failed };
 }

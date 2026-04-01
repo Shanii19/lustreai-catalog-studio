@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { runSequentialJobs } from "@/services/processingJobs";
 
 interface ZoomRequest {
   jewelryImageUrl: string;
@@ -50,27 +51,20 @@ export async function generateAllZoomShots(
   projectId: string,
   userId: string
 ): Promise<{ succeeded: number; failed: number }> {
-  const results = await Promise.allSettled(
-    images.map((img) =>
+  const { succeeded, failed } = await runSequentialJobs(
+    images,
+    (img) =>
       generateZoomShots({
         jewelryImageUrl: img.url,
         projectId,
         imageId: img.id,
         userId,
-      })
-    )
-  );
-
-  let succeeded = 0;
-  let failed = 0;
-
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value.success) {
-      succeeded++;
-    } else {
-      failed++;
+      }),
+    {
+      cooldownMs: 35_000,
+      timeoutMs: 240_000,
     }
-  }
+  );
 
   return { succeeded, failed };
 }

@@ -12,9 +12,9 @@ import { useProcessingStatus } from "@/hooks/useProcessingStatus";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { enhanceAllImages } from "@/services/enhancementService";
-import { generateAllModelRenders } from "@/services/modelRenderService";
-import { generateAllZoomShots } from "@/services/zoomGenerationService";
+import { enhanceAllImages, enhanceImage } from "@/services/enhancementService";
+import { generateAllModelRenders, generateModelRenders } from "@/services/modelRenderService";
+import { generateAllZoomShots, generateZoomShots } from "@/services/zoomGenerationService";
 import { useAuth } from "@/contexts/AuthContext";
 
 const STAGE_JOB_MAP = {
@@ -32,7 +32,7 @@ const Project = () => {
   const [showComplete, setShowComplete] = useState(false);
 
   const { user } = useAuth();
-  const { jobs, summary, retryJob, getJobsByType } = useProcessingStatus(id);
+  const { jobs, summary, getJobsByType } = useProcessingStatus(id);
 
   useEffect(() => {
     if (!id) return;
@@ -70,8 +70,94 @@ const Project = () => {
   };
 
   const handleRetry = async (imageId: string, jobType: "enhance" | "model_render" | "zoom") => {
-    await retryJob(imageId, jobType);
-    toast.info("Job re-queued");
+    if (!id || !user) return;
+
+    await supabase
+      .from("processing_jobs")
+      .delete()
+      .eq("project_id", id)
+      .eq("image_id", imageId)
+      .eq("job_type", jobType)
+      .eq("status", "failed");
+
+    if (jobType === "enhance") {
+      const image = uploadedImages.find((item) => item.id === imageId);
+
+      if (!image) {
+        toast.error("Original image not found for retry");
+        return;
+      }
+
+      const result = await enhanceImage({
+        imageUrl: image.url,
+        projectId: id,
+        imageId,
+        userId: user.id,
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to retry enhancement");
+        return;
+      }
+    }
+
+    if (jobType === "model_render") {
+      const { data } = await supabase
+        .from("project_images")
+        .select("storage_url, metadata, created_at")
+        .eq("project_id", id)
+        .eq("type", "enhanced")
+        .order("created_at", { ascending: false });
+
+      const enhancedImage = data?.find((item: any) => item.metadata?.original_image_id === imageId);
+
+      if (!enhancedImage?.storage_url) {
+        toast.error("Enhanced image not found for retry");
+        return;
+      }
+
+      const result = await generateModelRenders({
+        enhancedImageUrl: enhancedImage.storage_url,
+        projectId: id,
+        imageId,
+        userId: user.id,
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to retry model render");
+        return;
+      }
+    }
+
+    if (jobType === "zoom") {
+      const { data } = await supabase
+        .from("project_images")
+        .select("storage_url, metadata, created_at")
+        .eq("project_id", id)
+        .eq("type", "model")
+        .order("created_at", { ascending: false });
+
+      const modelImage = data?.find((item: any) => item.metadata?.jewelry_image_id === imageId);
+
+      if (!modelImage?.storage_url) {
+        toast.error("Model image not found for retry");
+        return;
+      }
+
+      const result = await generateZoomShots({
+        jewelryImageUrl: modelImage.storage_url,
+        projectId: id,
+        imageId,
+        userId: user.id,
+      });
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to retry zoom generation");
+        return;
+      }
+    }
+
+    toast.info("Retry started");
   };
 
   const currentJobType = STAGE_JOB_MAP[stage as keyof typeof STAGE_JOB_MAP];

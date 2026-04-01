@@ -193,7 +193,7 @@ async function genIdeogram(sourceImage: SourceImage, prompt: string): Promise<{ 
   if (!key) throw new Error('NOT_CONFIGURED')
   const fd = new FormData()
   fd.append('image_file', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
-  fd.append('image_request', JSON.stringify({ prompt: `${prompt}. Photorealistic 4K.`, model: 'V_3_TURBO', magic_prompt_option: 'AUTO', style_type: 'REALISTIC' }))
+  fd.append('image_request', JSON.stringify({ prompt: `${prompt}. Photorealistic 4K.`, model: 'V_3', magic_prompt_option: 'AUTO', style_type: 'REALISTIC' }))
   const response = await fetch('https://api.ideogram.ai/remix', { method: 'POST', headers: { 'Api-Key': key }, body: fd })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')

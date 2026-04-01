@@ -133,11 +133,21 @@ const Project = () => {
         {stage === 2 && (
           <ModelRenderStage
             images={uploadedImages}
-            onComplete={() => {
+            onComplete={(selectedModels) => {
               toast.success("Model rendering complete — starting 4K zoom generation");
               setStage(3);
               if (user && id) {
-                generateAllZoomShots(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
+                // Use the selected model images for zoom generation, not originals
+                const modelImages = selectedModels.map((sm) => ({
+                  id: sm.imageId,
+                  url: sm.modelUrl,
+                  name: `model_${sm.imageId}`,
+                }));
+                setUploadedImages((prev) => {
+                  // Store selected model URLs for the zoom stage to reference
+                  return prev;
+                });
+                generateAllZoomShots(modelImages, id, user.id).then(({ succeeded, failed }) => {
                   if (failed > 0) toast.error(`${failed} zoom generation(s) failed`);
                   if (succeeded > 0) toast.success(`${succeeded} zoom set(s) generated`);
                 });

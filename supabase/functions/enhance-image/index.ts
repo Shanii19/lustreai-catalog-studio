@@ -146,8 +146,8 @@ async function enhanceWithStability(imageBase64: string): Promise<{ image_base64
 // Try all providers in order
 async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
-    { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
     { name: 'Gemini Direct', fn: () => enhanceWithGemini(imageBase64) },
+    { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
     { name: 'Stability AI', fn: () => enhanceWithStability(imageBase64) },
   ]
 

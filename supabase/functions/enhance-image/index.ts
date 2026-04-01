@@ -23,8 +23,42 @@ interface RequestBody {
   user_id: string
 }
 
+interface UserApiKeyRow {
+  key_type: string
+  encrypted_key: string
+  is_active: boolean
+}
+
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getKeyPrefixType(key: string): 'gemini' | 'grok' | 'openai' | 'unknown' {
+  const normalized = key.trim()
+
+  if (normalized.startsWith('xk-')) return 'grok'
+  if (normalized.startsWith('sk-')) return 'openai'
+  if (normalized.startsWith('AIza')) return 'gemini'
+
+  return 'unknown'
+}
+
+async function getUserApiKey(userId: string, keyType: string): Promise<string | null> {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  const { data, error } = await supabase
+    .from('user_api_keys')
+    .select('key_type, encrypted_key, is_active')
+    .eq('user_id', userId)
+    .eq('key_type', keyType)
+    .eq('is_active', true)
+    .maybeSingle<UserApiKeyRow>()
+
+  if (error) {
+    console.warn(`Failed to load user API key (${keyType}): ${error.message}`)
+    return null
+  }
+
+  return data?.encrypted_key?.trim() || null
 }
 
 function normalizeMimeType(contentType: string | null): string {
@@ -87,8 +121,8 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 const ENHANCE_PROMPT = 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.'
 
 // --- Provider 1: Gemini Direct ---
-async function enhanceWithGemini(sourceImage: SourceImage): Promise<{ image_base64: string }> {
-  const key = Deno.env.get('GEMINI_API_KEY')
+async function enhanceWithGemini(sourceImage: SourceImage, overrideKey?: string | null): Promise<{ image_base64: string }> {
+  const key = overrideKey || Deno.env.get('GEMINI_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const response = await fetch(
@@ -140,8 +174,8 @@ async function enhanceWithLovable(sourceImage: SourceImage): Promise<{ image_bas
 }
 
 // --- Provider 3: OpenAI Image Edit ---
-async function enhanceWithOpenAI(sourceImage: SourceImage): Promise<{ image_base64: string }> {
-  const key = Deno.env.get('OpenAI_Image_API_KEY')
+async function enhanceWithOpenAI(sourceImage: SourceImage, overrideKey?: string | null): Promise<{ image_base64: string }> {
+  const key = overrideKey || Deno.env.get('OpenAI_Image_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const fd = new FormData()
@@ -164,8 +198,8 @@ async function enhanceWithOpenAI(sourceImage: SourceImage): Promise<{ image_base
 }
 
 // --- Provider 4: Grok (xAI) ---
-async function enhanceWithGrok(sourceImage: SourceImage): Promise<{ image_base64: string }> {
-  const key = Deno.env.get('GROK_API_KEY')
+async function enhanceWithGrok(sourceImage: SourceImage, overrideKey?: string | null): Promise<{ image_base64: string }> {
+  const key = overrideKey || Deno.env.get('GROK_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
   const response = await fetch('https://api.x.ai/v1/images/edits', {
@@ -318,22 +352,29 @@ async function enhanceWithFlux(imageBase64: string): Promise<{ image_base64: str
 }
 
 // === Fallback chain ===
-async function enhanceWithFallback(sourceImage: SourceImage): Promise<{ image_base64: string }> {
+async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Promise<{ image_base64: string }> {
+  const userEnhancementKey = await getUserApiKey(userId, 'enhancement')
+  const userKeyType = userEnhancementKey ? getKeyPrefixType(userEnhancementKey) : 'unknown'
+
   const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
-    { name: 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage) },
-    { name: 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage) },
-    { name: 'Grok (xAI)', fn: () => enhanceWithGrok(sourceImage) },
+    { name: userKeyType === 'gemini' ? 'Gemini Direct (Your Key)' : 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage, userKeyType === 'gemini' ? userEnhancementKey : null) },
+    { name: userKeyType === 'openai' ? 'OpenAI (Your Key)' : 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage, userKeyType === 'openai' ? userEnhancementKey : null) },
+    { name: userKeyType === 'grok' ? 'Grok (xAI) (Your Key)' : 'Grok (xAI)', fn: () => enhanceWithGrok(sourceImage, userKeyType === 'grok' ? userEnhancementKey : null) },
     { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
     { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]
+
+  if (userEnhancementKey && userKeyType === 'unknown') {
+    console.warn('User enhancement key is present but prefix is unrecognized, falling back to project providers')
+  }
 
   // Gemini free tier: ~10 RPM, resets per minute. Use longer waits with backoff.
   const RATE_LIMIT_WAITS = [15000, 30000, 60000] // 15s, 30s, 60s
 
   const errors: string[] = []
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 3 : 1
+    const maxRateLimitRetries = provider.name.includes('Gemini Direct') ? 3 : 1
     for (let rl = 0; rl <= maxRateLimitRetries; rl++) {
       try {
         console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)
@@ -359,10 +400,10 @@ async function enhanceWithFallback(sourceImage: SourceImage): Promise<{ image_ba
   throw new Error(`All providers failed: ${summarizeProviderErrors(errors)}`)
 }
 
-async function enhanceWithRetry(sourceImage: SourceImage, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
+async function enhanceWithRetry(sourceImage: SourceImage, userId: string, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await enhanceWithFallback(sourceImage)
+      return await enhanceWithFallback(sourceImage, userId)
     } catch (error) {
       if (attempt < retries) {
         const delay = RETRY_DELAYS[attempt] || 30000
@@ -379,7 +420,7 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
     const sourceImage = await fetchImageAsBase64(imageUrl)
-    const result = await enhanceWithRetry(sourceImage)
+    const result = await enhanceWithRetry(sourceImage, userId)
     await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', jobId)
 
     const storagePath = `${userId}/${projectId}/enhanced/enhanced_${imageId}.png`

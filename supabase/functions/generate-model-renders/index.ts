@@ -8,9 +8,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MAX_RETRIES = 1
+const MAX_RETRIES = 0
 const RETRY_DELAYS = [3000, 5000]
 const INTER_REQUEST_DELAY = 35000
+
+interface SourceImage {
+  base64: string
+  mimeType: string
+}
 
 interface RequestBody {
   enhanced_image_url: string
@@ -30,13 +35,46 @@ const WEARING_GUARDRAIL = 'The final output must show a real human model clearly
 
 async function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 
-async function fetchImageAsBase64(imageUrl: string): Promise<string> {
+function normalizeMimeType(contentType: string | null): string {
+  const mimeType = contentType?.split(';')[0]?.trim().toLowerCase()
+  if (!mimeType?.startsWith('image/')) return 'image/png'
+  return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType
+}
+
+function fileNameForMimeType(mimeType: string): string {
+  if (mimeType === 'image/jpeg') return 'image.jpeg'
+  if (mimeType === 'image/webp') return 'image.webp'
+  return 'image.png'
+}
+
+function toDataUrl(sourceImage: SourceImage): string {
+  return `data:${sourceImage.mimeType};base64,${sourceImage.base64}`
+}
+
+function summarizeProviderErrors(errors: string[]): string {
+  const deduped = new Map<string, string>()
+
+  for (const entry of errors) {
+    const separatorIndex = entry.indexOf(':')
+    const provider = separatorIndex === -1 ? entry : entry.slice(0, separatorIndex)
+    const message = separatorIndex === -1 ? 'Unknown error' : entry.slice(separatorIndex + 1).trim()
+
+    if (!deduped.has(provider)) deduped.set(provider, message)
+  }
+
+  return Array.from(deduped.entries()).map(([provider, message]) => `${provider}: ${message}`).join('; ')
+}
+
+async function fetchImageAsBase64(imageUrl: string): Promise<SourceImage> {
   const resp = await fetch(imageUrl)
   if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
   const bytes = new Uint8Array(await resp.arrayBuffer())
   let binary = ''
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
+  return {
+    base64: btoa(binary),
+    mimeType: normalizeMimeType(resp.headers.get('content-type')),
+  }
 }
 
 function base64ToBlob(b64: string, mime = 'image/png'): Blob {
@@ -58,7 +96,7 @@ function buildPrompt(suffix: string): string {
 }
 
 // --- Provider 1: Gemini Direct ---
-async function genGemini(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genGemini(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('GEMINI_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
   const response = await fetch(
@@ -67,7 +105,7 @@ async function genGemini(imageBase64: string, prompt: string): Promise<{ image_b
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/png', data: imageBase64 } }] }],
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.base64 } }] }],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
@@ -81,28 +119,27 @@ async function genGemini(imageBase64: string, prompt: string): Promise<{ image_b
 }
 
 // --- Provider 2: OpenAI ---
-async function genOpenAI(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genOpenAI(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('OpenAI_Image_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
   const fd = new FormData()
-  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('prompt', prompt)
   fd.append('model', 'gpt-image-1')
   fd.append('size', '1024x1024')
-  fd.append('response_format', 'b64_json')
   const response = await fetch('https://api.openai.com/v1/images/edits', {
     method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: fd,
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`OpenAI error ${response.status}`)
+  if (!response.ok) throw new Error(`OpenAI error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
   if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json, provider: 'OpenAI' }
   throw new Error('OpenAI returned no image')
 }
 
 // --- Provider 3: Lovable AI Gateway ---
-async function genLovable(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genLovable(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('LOVABLE_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
   const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -112,7 +149,7 @@ async function genLovable(imageBase64: string, prompt: string): Promise<{ image_
       model: 'google/gemini-2.5-flash-image',
       messages: [{ role: 'user', content: [
         { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+        { type: 'image_url', image_url: { url: toDataUrl(sourceImage) } },
       ]}],
       modalities: ['image', 'text'],
     }),
@@ -127,24 +164,25 @@ async function genLovable(imageBase64: string, prompt: string): Promise<{ image_
 }
 
 // --- Provider 4: Grok (xAI) ---
-async function genGrok(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genGrok(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('GROK_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+  const response = await fetch('https://api.x.ai/v1/images/edits', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'grok-2-image',
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
-      ]}],
+      model: 'grok-imagine-image',
+      prompt,
+      image: { url: toDataUrl(sourceImage) },
+      response_format: 'b64_json',
     }),
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (!response.ok) throw new Error(`Grok error ${response.status}`)
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Grok error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
-  const url = result.choices?.[0]?.message?.content?.find?.((c: any) => c.type === 'image_url')?.image_url?.url
+  if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json, provider: 'Grok' }
+  const url = result.data?.[0]?.url
   if (url) {
     if (url.startsWith('data:')) return { image_base64: url.replace(/^data:image\/\w+;base64,/, ''), provider: 'Grok' }
     return { image_base64: arrayBufferToBase64(await (await fetch(url)).arrayBuffer()), provider: 'Grok' }
@@ -153,16 +191,16 @@ async function genGrok(imageBase64: string, prompt: string): Promise<{ image_bas
 }
 
 // --- Provider 5: Ideogram v3 Turbo ---
-async function genIdeogram(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genIdeogram(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('ideogram_v3_turbo_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
   const fd = new FormData()
-  fd.append('image_file', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image_file', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('image_request', JSON.stringify({ prompt, model: 'V_3_TURBO', magic_prompt_option: 'AUTO', style_type: 'REALISTIC' }))
   const response = await fetch('https://api.ideogram.ai/remix', { method: 'POST', headers: { 'Api-Key': key }, body: fd })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Ideogram error ${response.status}`)
+  if (!response.ok) throw new Error(`Ideogram error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   const result = await response.json()
   const imgUrl = result.data?.[0]?.url
   if (imgUrl) return { image_base64: arrayBufferToBase64(await (await fetch(imgUrl)).arrayBuffer()), provider: 'Ideogram' }
@@ -170,11 +208,11 @@ async function genIdeogram(imageBase64: string, prompt: string): Promise<{ image
 }
 
 // --- Provider 6: Stability AI ---
-async function genStability(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+async function genStability(sourceImage: SourceImage, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('Stability_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
   const fd = new FormData()
-  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image', base64ToBlob(sourceImage.base64, sourceImage.mimeType), fileNameForMimeType(sourceImage.mimeType))
   fd.append('prompt', prompt)
   fd.append('output_format', 'png')
   fd.append('mode', 'image-to-image')
@@ -184,7 +222,7 @@ async function genStability(imageBase64: string, prompt: string): Promise<{ imag
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Stability error ${response.status}`)
+  if (!response.ok) throw new Error(`Stability error ${response.status}: ${(await response.text()).slice(0, 240)}`)
   return { image_base64: arrayBufferToBase64(await response.arrayBuffer()), provider: 'Stability AI' }
 }
 
@@ -240,18 +278,15 @@ async function genHuggingFace(_imageBase64: string, prompt: string): Promise<{ i
 }
 
 // === Fallback chain ===
-async function generateWithFallback(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
+async function generateWithFallback(sourceImage: SourceImage, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
   const prompt = buildPrompt(promptSuffix)
   const providers: { name: string; fn: () => Promise<{ image_base64: string; provider: string }> }[] = [
-    { name: 'Gemini Direct', fn: () => genGemini(imageBase64, prompt) },
-    { name: 'OpenAI', fn: () => genOpenAI(imageBase64, prompt) },
-    { name: 'Lovable AI', fn: () => genLovable(imageBase64, prompt) },
-    { name: 'Grok (xAI)', fn: () => genGrok(imageBase64, prompt) },
-    { name: 'Ideogram', fn: () => genIdeogram(imageBase64, prompt) },
-    { name: 'Stability AI', fn: () => genStability(imageBase64, prompt) },
-    { name: 'Imagen 4', fn: () => genImagen(imageBase64, prompt) },
-    { name: 'Flux', fn: () => genFlux(imageBase64, prompt) },
-    { name: 'Hugging Face', fn: () => genHuggingFace(imageBase64, prompt) },
+    { name: 'Gemini Direct', fn: () => genGemini(sourceImage, prompt) },
+    { name: 'OpenAI', fn: () => genOpenAI(sourceImage, prompt) },
+    { name: 'Grok (xAI)', fn: () => genGrok(sourceImage, prompt) },
+    { name: 'Ideogram', fn: () => genIdeogram(sourceImage, prompt) },
+    { name: 'Stability AI', fn: () => genStability(sourceImage, prompt) },
+    { name: 'Lovable AI', fn: () => genLovable(sourceImage, prompt) },
   ]
 
   const errors: string[] = []
@@ -272,12 +307,12 @@ async function generateWithFallback(imageBase64: string, promptSuffix: string): 
       }
     }
   }
-  throw new Error(`All providers failed: ${errors.join('; ')}`)
+  throw new Error(`All providers failed: ${summarizeProviderErrors(errors)}`)
 }
 
-async function generateWithRetry(imageBase64: string, promptSuffix: string, retries = MAX_RETRIES): Promise<{ image_base64: string; provider: string }> {
+async function generateWithRetry(sourceImage: SourceImage, promptSuffix: string, retries = MAX_RETRIES): Promise<{ image_base64: string; provider: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    try { return await generateWithFallback(imageBase64, promptSuffix) }
+    try { return await generateWithFallback(sourceImage, promptSuffix) }
     catch (error) {
       if (attempt < retries) { await sleep(RETRY_DELAYS[attempt] || 30000) } else throw error
     }
@@ -288,11 +323,11 @@ async function generateWithRetry(imageBase64: string, promptSuffix: string, retr
 async function processModelRenders(jobId: string, enhancedImageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   try {
-    const enhancedImageBase64 = await fetchImageAsBase64(enhancedImageUrl)
+    const sourceImage = await fetchImageAsBase64(enhancedImageUrl)
     for (let i = 0; i < VARIANT_PROMPTS.length; i++) {
       const { variant, suffix } = VARIANT_PROMPTS[i]
       await supabase.from('processing_jobs').update({ progress: Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100) }).eq('id', jobId)
-      const result = await generateWithRetry(enhancedImageBase64, suffix)
+      const result = await generateWithRetry(sourceImage, suffix)
 
       const storagePath = `${userId}/${projectId}/models/${imageId}/variant_${variant}.png`
       const { error: storageError } = await supabase.storage.from('project-images')

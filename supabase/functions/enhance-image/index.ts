@@ -328,9 +328,13 @@ async function enhanceWithFallback(sourceImage: SourceImage): Promise<{ image_ba
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]
 
+  // Gemini free tier: ~10 RPM, resets per minute. Use longer waits with backoff.
+  const RATE_LIMIT_WAITS = [15000, 30000, 60000] // 15s, 30s, 60s
+
   const errors: string[] = []
   for (const provider of providers) {
-    for (let rl = 0; rl < 2; rl++) {
+    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 3 : 1
+    for (let rl = 0; rl <= maxRateLimitRetries; rl++) {
       try {
         console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)
         const result = await provider.fn()
@@ -339,12 +343,13 @@ async function enhanceWithFallback(sourceImage: SourceImage): Promise<{ image_ba
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error)
         console.warn(`❌ ${provider.name} failed: ${msg}`)
-        errors.push(`${provider.name}: ${msg}`)
+        if (rl === 0) errors.push(`${provider.name}: ${msg}`)
         if (msg === 'NOT_CONFIGURED') break
         if (msg === 'CREDITS_EXHAUSTED') break
-        if (msg === 'RATE_LIMITED' && rl < 1) {
-          console.log(`Rate limited, waiting 5s...`)
-          await sleep(5000)
+        if (msg === 'RATE_LIMITED' && rl < maxRateLimitRetries) {
+          const waitMs = RATE_LIMIT_WAITS[Math.min(rl, RATE_LIMIT_WAITS.length - 1)]
+          console.log(`Rate limited, waiting ${waitMs / 1000}s before retry ${rl + 1}...`)
+          await sleep(waitMs)
           continue
         }
         break

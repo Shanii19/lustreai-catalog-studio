@@ -46,7 +46,10 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
     // For each image, build 3 variant slots based on job progress
     const updated: Record<string, ModelVariant[]> = {};
     images.forEach((img) => {
-      const job = jobs.find((j) => j.image_id === img.id && j.job_type === "model_render");
+      const job = [...jobs]
+        .filter((j) => j.image_id === img.id && j.job_type === "model_render")
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+
       const progress = job?.progress ?? 0;
       const isDone = job?.status === "complete";
       updated[img.id] = [0, 1, 2].map((vi) => {
@@ -150,7 +153,10 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
   const getJobStatus = (imageId: string) => {
     if (!hasRealJobs) return null;
-    const job = jobs.find((j) => j.image_id === imageId && j.job_type === "model_render");
+    const job = [...jobs]
+      .filter((j) => j.image_id === imageId && j.job_type === "model_render")
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+
     return job || null;
   };
 

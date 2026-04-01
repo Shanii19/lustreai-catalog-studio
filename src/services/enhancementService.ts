@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { runSequentialJobs } from "@/services/processingJobs";
 
 // TODO: These will be replaced when a real enhancement provider is configured
 // The edge function handles the actual API call server-side
@@ -52,27 +53,20 @@ export async function enhanceAllImages(
   projectId: string,
   userId: string
 ): Promise<{ succeeded: number; failed: number }> {
-  const results = await Promise.allSettled(
-    images.map((img) =>
+  const { succeeded, failed } = await runSequentialJobs(
+    images,
+    (img) =>
       enhanceImage({
         imageUrl: img.url,
         projectId,
         imageId: img.id,
         userId,
-      })
-    )
-  );
-
-  let succeeded = 0;
-  let failed = 0;
-
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value.success) {
-      succeeded++;
-    } else {
-      failed++;
+      }),
+    {
+      cooldownMs: 35_000,
+      timeoutMs: 180_000,
     }
-  }
+  );
 
   return { succeeded, failed };
 }

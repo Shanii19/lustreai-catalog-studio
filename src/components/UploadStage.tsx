@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { waitForProcessingJob } from "@/services/processingJobs";
 
 interface UploadedFile {
   file: File;
@@ -72,7 +73,7 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
     if (!user) return;
     setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: true } : p));
 
-    const { error } = await supabase.functions.invoke("remove-background", {
+    const { data, error } = await supabase.functions.invoke<{ success: boolean; job_id?: string }>("remove-background", {
       body: {
         image_url: imageUrl,
         project_id: projectId,
@@ -84,6 +85,34 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
     if (error) {
       console.error("BG removal error:", error);
       toast.error("Background removal failed — will use original image");
+      setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: false, bgDone: true } : p));
+      return;
+    }
+
+    if (!data?.job_id) {
+      toast.error("Background cleanup did not start — using original image");
+      setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: false, bgDone: true } : p));
+      return;
+    }
+
+    const result = await waitForProcessingJob(data.job_id, 120_000);
+
+    if (result.success) {
+      const { data: updatedImage } = await supabase
+        .from("project_images")
+        .select("storage_url")
+        .eq("id", imageId)
+        .single();
+
+      if (updatedImage?.storage_url) {
+        setUploadedImages((prev) =>
+          prev.map((img) =>
+            img.id === imageId ? { ...img, url: updatedImage.storage_url } : img
+          )
+        );
+      }
+    } else {
+      toast.error(result.error || "Background removal failed — using original image");
     }
 
     setFiles((prev) => prev.map((p, j) => j === fileIdx ? { ...p, bgRemoving: false, bgDone: true } : p));
@@ -126,11 +155,10 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
       setFiles((prev) => prev.map((p, j) => j === idx ? { ...p, uploading: false, progress: 100, done: true, dbId: dbData.id } : p));
       setUploadedImages((prev) => [...prev, { id: dbData.id, url: urlData.publicUrl, name: f.file.name }]);
 
-      // Auto-trigger background removal
       toast.info(`Removing background from ${f.file.name}…`);
-      triggerBgRemoval(dbData.id, urlData.publicUrl, idx);
+      await triggerBgRemoval(dbData.id, urlData.publicUrl, idx);
     }
-    toast.success("Upload complete — background removal in progress");
+    toast.success("Upload complete — ready for enhancement");
   };
 
   const removeUploaded = async (id: string) => {
@@ -138,7 +166,8 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
     setUploadedImages((prev) => prev.filter((img) => img.id !== id));
   };
 
-  const allDone = files.length > 0 && files.every((f) => f.done);
+  const allDone = files.length > 0 && files.every((f) => f.done && f.bgDone);
+  const hasPendingBgRemoval = files.some((f) => f.bgRemoving || (f.done && !f.bgDone));
   const hasImages = uploadedImages.length > 0 || allDone;
 
   const formatSize = (bytes: number) => {
@@ -225,7 +254,11 @@ const UploadStage = ({ projectId, onComplete, uploadedImages, setUploadedImages 
       )}
 
       {/* CTA */}
-      {hasImages && (
+      {hasPendingBgRemoval && (
+        <p className="text-sm text-muted-foreground">Finishing background cleanup before enhancement…</p>
+      )}
+
+      {hasImages && !hasPendingBgRemoval && (
         <div className="flex justify-end pt-2">
           <Button onClick={onComplete} size="lg" className="gap-2 gold-glow-hover">
             Enhance Images →

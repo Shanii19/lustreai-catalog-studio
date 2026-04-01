@@ -66,6 +66,9 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
       images.forEach((img) => {
         const job = jobs.find((j) => j.image_id === img.id && j.job_type === "zoom");
+        const latestJob = [...jobs]
+          .filter((j) => j.image_id === img.id && j.job_type === "zoom")
+          .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
         const imgZooms = (zoomImages || []).filter(
           (z) => (z.metadata as any)?.jewelry_image_id === img.id
         );
@@ -86,7 +89,7 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
           }
 
           // Not yet generated — use job progress
-          const jobProgress = job?.progress || 0;
+          const jobProgress = latestJob?.progress || 0;
           const perAngleProgress = Math.max(0, Math.min(100,
             Math.round((jobProgress - ai * 25) * 4)
           ));
@@ -160,7 +163,9 @@ const ZoomExportStage = ({ images, onComplete, jobs, onRetry }: Props) => {
 
   const getJobStatus = (imageId: string) => {
     if (!hasRealJobs) return null;
-    return jobs.find((j) => j.image_id === imageId && j.job_type === "zoom") || null;
+    return [...jobs]
+      .filter((j) => j.image_id === imageId && j.job_type === "zoom")
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
   };
 
   const allDone = images.length > 0 && images.every((img) => {

@@ -45,7 +45,7 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
 }
 
 // Provider 1: Lovable AI Gateway
-async function generateWithLovable(imageBase64: string, prompt: string): Promise<{ image_base64: string }> {
+async function generateWithLovable(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -73,13 +73,13 @@ async function generateWithLovable(imageBase64: string, prompt: string): Promise
   const images = result.choices?.[0]?.message?.images
   if (images?.[0]?.image_url?.url) {
     const dataUrl = images[0].image_url.url as string
-    return { image_base64: dataUrl.replace(/^data:image\/\w+;base64,/, '') }
+    return { image_base64: dataUrl.replace(/^data:image\/\w+;base64,/, ''), provider: 'Lovable AI' }
   }
   throw new Error('No image returned')
 }
 
 // Provider 2: Gemini Direct API (free)
-async function generateWithGemini(imageBase64: string, prompt: string): Promise<{ image_base64: string }> {
+async function generateWithGemini(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
 
   const response = await fetch(
@@ -106,13 +106,13 @@ async function generateWithGemini(imageBase64: string, prompt: string): Promise<
   const parts = result.candidates?.[0]?.content?.parts
   const imagePart = parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
   if (imagePart?.inlineData?.data) {
-    return { image_base64: imagePart.inlineData.data }
+    return { image_base64: imagePart.inlineData.data, provider: 'Gemini Direct' }
   }
   throw new Error('Gemini did not return an image')
 }
 
 // Provider 3: Stability AI
-async function generateWithStability(imageBase64: string, prompt: string): Promise<{ image_base64: string }> {
+async function generateWithStability(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
   if (!STABILITY_API_KEY) throw new Error('Stability_API_KEY not configured')
 
   const binaryStr = atob(imageBase64)
@@ -147,10 +147,10 @@ async function generateWithStability(imageBase64: string, prompt: string): Promi
   const resultBytes = new Uint8Array(arrayBuffer)
   let binary = ''
   for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
-  return { image_base64: btoa(binary) }
+  return { image_base64: btoa(binary), provider: 'Stability AI' }
 }
 
-async function generateWithFallback(imageBase64: string, prompt: string): Promise<{ image_base64: string }> {
+async function generateWithFallback(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const providers = [
     { name: 'Gemini Direct', fn: () => generateWithGemini(imageBase64, prompt) },
     { name: 'Lovable AI', fn: () => generateWithLovable(imageBase64, prompt) },
@@ -181,7 +181,7 @@ async function generateWithFallback(imageBase64: string, prompt: string): Promis
   throw new Error('All image providers failed')
 }
 
-async function generateWithRetry(imageBase64: string, prompt: string, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
+async function generateWithRetry(imageBase64: string, prompt: string, retries = MAX_RETRIES): Promise<{ image_base64: string; provider: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await generateWithFallback(imageBase64, prompt)
@@ -236,7 +236,9 @@ async function processZoomShots(jobId: string, jewelryImageUrl: string, projectI
       const uploadPct = Math.round(((i * 2 + 2) / (ZOOM_SHOTS.length * 2)) * 100)
       await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', jobId)
 
-      if (i < ZOOM_SHOTS.length - 1) await sleep(2000)
+      if (i < ZOOM_SHOTS.length - 1) {
+        await sleep(result.provider === 'Gemini Direct' ? 35000 : 2000)
+      }
     }
 
     await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)

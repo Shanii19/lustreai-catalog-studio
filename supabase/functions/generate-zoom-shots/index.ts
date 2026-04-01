@@ -57,7 +57,7 @@ async function generateZoomImage(
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail faithfully. Generate a photorealistic 4K product photograph.` },
+          { type: 'text', text: `${prompt}. Use the provided model image as the exact reference — reproduce the model and jewelry faithfully. Generate a photorealistic 4K fashion photograph.` },
           { type: 'image_url', image_url: { url: `data:image/png;base64,${jewelryImageBase64}` } },
         ],
       }],

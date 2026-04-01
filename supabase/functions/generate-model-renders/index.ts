@@ -13,7 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 4
 const RETRY_DELAYS = [5000, 10000, 20000, 30000]
-const GEMINI_IMAGE_MODEL = 'gemini-2.0-flash-exp-image-generation'
+const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image'
 
 interface RequestBody {
   enhanced_image_url: string
@@ -173,16 +173,24 @@ async function generateWithFallback(imageBase64: string, promptSuffix: string): 
   ]
 
   for (const provider of providers) {
-    try {
-      console.log(`Trying ${provider.name}...`)
-      const result = await provider.fn()
-      console.log(`✅ ${provider.name} succeeded`)
-      return result
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      console.warn(`❌ ${provider.name} failed: ${msg}`)
-      if (msg === 'RATE_LIMITED') await sleep(5000)
-      continue
+    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 3 : 1
+    for (let rlAttempt = 0; rlAttempt < maxRateLimitRetries; rlAttempt++) {
+      try {
+        console.log(`Trying ${provider.name}${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
+        const result = await provider.fn()
+        console.log(`✅ ${provider.name} succeeded`)
+        return result
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.warn(`❌ ${provider.name} failed: ${msg}`)
+        if (msg === 'RATE_LIMITED' && rlAttempt < maxRateLimitRetries - 1) {
+          const rlDelay = 15000 * (rlAttempt + 1)
+          console.log(`Rate limited, waiting ${rlDelay / 1000}s before retry...`)
+          await sleep(rlDelay)
+          continue
+        }
+        break
+      }
     }
   }
   throw new Error('All image providers failed')

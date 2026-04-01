@@ -5,15 +5,12 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
-const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 1
 const RETRY_DELAYS = [3000, 5000]
-const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image'
+const INTER_REQUEST_DELAY = 35000
 
 interface RequestBody {
   enhanced_image_url: string
@@ -28,186 +25,261 @@ const VARIANT_PROMPTS = [
   { variant: 3, suffix: 'full editorial fashion shot, full body, runway style, dramatic lighting' },
 ]
 
-const BASE_PROMPT =
-  'A photorealistic Asian female fashion model wearing the exact jewelry from the reference image on her real neck and chest, professional studio lighting, luxury editorial fashion photography, clean premium background, ultra-detailed'
+const BASE_PROMPT = 'A photorealistic Asian female fashion model wearing the exact jewelry from the reference image on her real neck and chest, professional studio lighting, luxury editorial fashion photography, clean premium background, ultra-detailed'
+const WEARING_GUARDRAIL = 'The final output must show a real human model clearly wearing the exact necklace from the reference image. Do not generate a standalone product shot, isolated jewelry, floating necklace, mannequin, bust display, or empty background with only the jewelry. Preserve the exact pendant shape, gemstone colors, chain structure, and ornament placement from the reference.'
 
-const WEARING_GUARDRAIL =
-  'The final output must show a real human model clearly wearing the exact necklace from the reference image. Do not generate a standalone product shot, isolated jewelry, floating necklace, mannequin, bust display, or empty background with only the jewelry. Preserve the exact pendant shape, gemstone colors, chain structure, and ornament placement from the reference.'
-
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
+async function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 
 async function fetchImageAsBase64(imageUrl: string): Promise<string> {
   const resp = await fetch(imageUrl)
   if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
-  const arrayBuffer = await resp.arrayBuffer()
-  const bytes = new Uint8Array(arrayBuffer)
+  const bytes = new Uint8Array(await resp.arrayBuffer())
   let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
   return btoa(binary)
 }
 
-// Provider 1: Lovable AI Gateway
-async function generateWithLovable(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} Generate a photorealistic fashion photograph where the jewelry is naturally draped and proportionally correct on the model.`
-
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-flash-image',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: fullPrompt },
-          { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
-        ],
-      }],
-      modalities: ['image', 'text'],
-    }),
-  })
-
-  if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (response.status === 402) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Lovable gateway error ${response.status}`)
-
-  const result = await response.json()
-  const images = result.choices?.[0]?.message?.images
-  if (images?.[0]?.image_url?.url) {
-    const dataUrl = images[0].image_url.url as string
-    return { image_base64: dataUrl.replace(/^data:image\/\w+;base64,/, ''), provider: 'Lovable AI' }
-  }
-  throw new Error('No image returned')
+function base64ToBlob(b64: string, mime = 'image/png'): Blob {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
 }
 
-// Provider 2: Gemini Direct API (free)
-async function generateWithGemini(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
 
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} Generate a photorealistic fashion photograph where the model is visibly wearing the necklace.`
+function buildPrompt(suffix: string): string {
+  return `${BASE_PROMPT}, ${suffix}. ${WEARING_GUARDRAIL} Generate a photorealistic fashion photograph where the jewelry is naturally draped and proportionally correct on the model.`
+}
 
+// --- Provider 1: Gemini Direct ---
+async function genGemini(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('GEMINI_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': GEMINI_API_KEY,
-      },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: fullPrompt },
-            { inlineData: { mimeType: 'image/png', data: imageBase64 } },
-          ],
-        }],
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/png', data: imageBase64 } }] }],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
   )
-
   if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (!response.ok) throw new Error(`Gemini API error ${response.status}`)
-
+  if (!response.ok) throw new Error(`Gemini error ${response.status}`)
   const result = await response.json()
-  const parts = result.candidates?.[0]?.content?.parts
-  const imagePart = parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
-  if (imagePart?.inlineData?.data) {
-    return { image_base64: imagePart.inlineData.data, provider: 'Gemini Direct' }
-  }
-  throw new Error('Gemini did not return an image')
+  const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
+  if (imagePart?.inlineData?.data) return { image_base64: imagePart.inlineData.data, provider: 'Gemini Direct' }
+  throw new Error('Gemini returned no image')
 }
 
-// Provider 3: Stability AI
-async function generateWithStability(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
-  if (!STABILITY_API_KEY) throw new Error('Stability_API_KEY not configured')
-
-  const fullPrompt = `${BASE_PROMPT}, ${promptSuffix}. ${WEARING_GUARDRAIL} The necklace must be on the model's neck, not shown alone. Photorealistic fashion photograph.`
-
-  const binaryStr = atob(imageBase64)
-  const bytes = new Uint8Array(binaryStr.length)
-  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-  const imageBlob = new Blob([bytes], { type: 'image/png' })
-
-  const formData = new FormData()
-  formData.append('image', imageBlob, 'image.png')
-  formData.append('prompt', fullPrompt)
-  formData.append('output_format', 'png')
-  formData.append('mode', 'image-to-image')
-  formData.append('strength', '0.65')
-
-  const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${STABILITY_API_KEY}`,
-      Accept: 'image/*',
-    },
-    body: formData,
+// --- Provider 2: OpenAI ---
+async function genOpenAI(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('OpenAI_Image_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const fd = new FormData()
+  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('prompt', prompt)
+  fd.append('model', 'gpt-image-1')
+  fd.append('size', '1024x1024')
+  fd.append('response_format', 'b64_json')
+  const response = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: fd,
   })
-
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Stability API error ${response.status}: ${errText}`)
-  }
-
-  const arrayBuffer = await response.arrayBuffer()
-  const resultBytes = new Uint8Array(arrayBuffer)
-  let binary = ''
-  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
-  return { image_base64: btoa(binary), provider: 'Stability AI' }
+  if (!response.ok) throw new Error(`OpenAI error ${response.status}`)
+  const result = await response.json()
+  if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json, provider: 'OpenAI' }
+  throw new Error('OpenAI returned no image')
 }
 
+// --- Provider 3: Lovable AI Gateway ---
+async function genLovable(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('LOVABLE_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'google/gemini-2.5-flash-image',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+      ]}],
+      modalities: ['image', 'text'],
+    }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Lovable error ${response.status}`)
+  const result = await response.json()
+  const dataUrl = result.choices?.[0]?.message?.images?.[0]?.image_url?.url
+  if (dataUrl) return { image_base64: (dataUrl as string).replace(/^data:image\/\w+;base64,/, ''), provider: 'Lovable AI' }
+  throw new Error('No image returned')
+}
+
+// --- Provider 4: Grok (xAI) ---
+async function genGrok(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('GROK_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'grok-2-image',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+      ]}],
+    }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`Grok error ${response.status}`)
+  const result = await response.json()
+  const url = result.choices?.[0]?.message?.content?.find?.((c: any) => c.type === 'image_url')?.image_url?.url
+  if (url) {
+    if (url.startsWith('data:')) return { image_base64: url.replace(/^data:image\/\w+;base64,/, ''), provider: 'Grok' }
+    return { image_base64: arrayBufferToBase64(await (await fetch(url)).arrayBuffer()), provider: 'Grok' }
+  }
+  throw new Error('Grok returned no image')
+}
+
+// --- Provider 5: Ideogram v3 Turbo ---
+async function genIdeogram(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('ideogram_v3_turbo_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const fd = new FormData()
+  fd.append('image_file', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image_request', JSON.stringify({ prompt, model: 'V_3_TURBO', magic_prompt_option: 'AUTO', style_type: 'REALISTIC' }))
+  const response = await fetch('https://api.ideogram.ai/remix', { method: 'POST', headers: { 'Api-Key': key }, body: fd })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Ideogram error ${response.status}`)
+  const result = await response.json()
+  const imgUrl = result.data?.[0]?.url
+  if (imgUrl) return { image_base64: arrayBufferToBase64(await (await fetch(imgUrl)).arrayBuffer()), provider: 'Ideogram' }
+  throw new Error('Ideogram returned no image')
+}
+
+// --- Provider 6: Stability AI ---
+async function genStability(imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('Stability_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const fd = new FormData()
+  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('prompt', prompt)
+  fd.append('output_format', 'png')
+  fd.append('mode', 'image-to-image')
+  fd.append('strength', '0.65')
+  const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+    method: 'POST', headers: { Authorization: `Bearer ${key}`, Accept: 'image/*' }, body: fd,
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Stability error ${response.status}`)
+  return { image_base64: arrayBufferToBase64(await response.arrayBuffer()), provider: 'Stability AI' }
+}
+
+// --- Provider 7: Imagen 4 ---
+async function genImagen(_imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('imagen_4_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4:generateImages?key=${key}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, config: { numberOfImages: 1, outputOptions: { mimeType: 'image/png' } } }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`Imagen error ${response.status}`)
+  const result = await response.json()
+  if (result.generatedImages?.[0]?.image?.imageBytes) return { image_base64: result.generatedImages[0].image.imageBytes, provider: 'Imagen 4' }
+  throw new Error('Imagen returned no image')
+}
+
+// --- Provider 8: Flux ---
+async function genFlux(_imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('FLUX_API_KEY') || Deno.env.get('flux_2_pro_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const response = await fetch('https://api.bfl.ml/v1/flux-pro-1.1', {
+    method: 'POST', headers: { 'X-Key': key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, width: 1024, height: 1024 }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`Flux error ${response.status}`)
+  const { id: taskId } = await response.json()
+  for (let i = 0; i < 30; i++) {
+    await sleep(2000)
+    const sr = await fetch(`https://api.bfl.ml/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
+    const status = await sr.json()
+    if (status.status === 'Ready' && status.result?.sample) {
+      return { image_base64: arrayBufferToBase64(await (await fetch(status.result.sample)).arrayBuffer()), provider: 'Flux' }
+    }
+    if (status.status === 'Error') throw new Error('Flux generation failed')
+  }
+  throw new Error('Flux timeout')
+}
+
+// --- Provider 9: Hugging Face ---
+async function genHuggingFace(_imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
+  const key = Deno.env.get('Hugging_Face_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+  const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
+    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs: prompt }),
+  })
+  if (response.status === 429 || response.status === 503) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`HuggingFace error ${response.status}`)
+  return { image_base64: arrayBufferToBase64(await response.arrayBuffer()), provider: 'Hugging Face' }
+}
+
+// === Fallback chain ===
 async function generateWithFallback(imageBase64: string, promptSuffix: string): Promise<{ image_base64: string; provider: string }> {
-  const providers = [
-    { name: 'Gemini Direct', fn: () => generateWithGemini(imageBase64, promptSuffix) },
-    { name: 'Lovable AI', fn: () => generateWithLovable(imageBase64, promptSuffix) },
-    { name: 'Stability AI', fn: () => generateWithStability(imageBase64, promptSuffix) },
+  const prompt = buildPrompt(promptSuffix)
+  const providers: { name: string; fn: () => Promise<{ image_base64: string; provider: string }> }[] = [
+    { name: 'Gemini Direct', fn: () => genGemini(imageBase64, prompt) },
+    { name: 'OpenAI', fn: () => genOpenAI(imageBase64, prompt) },
+    { name: 'Lovable AI', fn: () => genLovable(imageBase64, prompt) },
+    { name: 'Grok (xAI)', fn: () => genGrok(imageBase64, prompt) },
+    { name: 'Ideogram', fn: () => genIdeogram(imageBase64, prompt) },
+    { name: 'Stability AI', fn: () => genStability(imageBase64, prompt) },
+    { name: 'Imagen 4', fn: () => genImagen(imageBase64, prompt) },
+    { name: 'Flux', fn: () => genFlux(imageBase64, prompt) },
+    { name: 'Hugging Face', fn: () => genHuggingFace(imageBase64, prompt) },
   ]
 
+  const errors: string[] = []
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 2 : 1
-    for (let rlAttempt = 0; rlAttempt < maxRateLimitRetries; rlAttempt++) {
+    for (let rl = 0; rl < 2; rl++) {
       try {
-        console.log(`Trying ${provider.name}${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
+        console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)
         const result = await provider.fn()
         console.log(`✅ ${provider.name} succeeded`)
         return result
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error)
         console.warn(`❌ ${provider.name} failed: ${msg}`)
-        if (msg === 'RATE_LIMITED' && rlAttempt < maxRateLimitRetries - 1) {
-          const rlDelay = 5000 * (rlAttempt + 1)
-          console.log(`Rate limited, waiting ${rlDelay / 1000}s before retry...`)
-          await sleep(rlDelay)
-          continue
-        }
+        errors.push(`${provider.name}: ${msg}`)
+        if (msg === 'NOT_CONFIGURED' || msg === 'CREDITS_EXHAUSTED') break
+        if (msg === 'RATE_LIMITED' && rl < 1) { await sleep(5000); continue }
         break
       }
     }
   }
-  throw new Error('All image providers failed')
+  throw new Error(`All providers failed: ${errors.join('; ')}`)
 }
 
 async function generateWithRetry(imageBase64: string, promptSuffix: string, retries = MAX_RETRIES): Promise<{ image_base64: string; provider: string }> {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await generateWithFallback(imageBase64, promptSuffix)
-    } catch (error) {
-      if (attempt < retries) {
-        const delay = RETRY_DELAYS[attempt] || 30000
-        console.log(`Model gen attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
-        await sleep(delay)
-      } else {
-        throw error
-      }
+    try { return await generateWithFallback(imageBase64, promptSuffix) }
+    catch (error) {
+      if (attempt < retries) { await sleep(RETRY_DELAYS[attempt] || 30000) } else throw error
     }
   }
   throw new Error('Model generation failed after all retries')
@@ -215,98 +287,57 @@ async function generateWithRetry(imageBase64: string, promptSuffix: string, retr
 
 async function processModelRenders(jobId: string, enhancedImageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
   try {
     const enhancedImageBase64 = await fetchImageAsBase64(enhancedImageUrl)
-
     for (let i = 0; i < VARIANT_PROMPTS.length; i++) {
       const { variant, suffix } = VARIANT_PROMPTS[i]
-
-      const progressPct = Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100)
-      await supabase.from('processing_jobs').update({ progress: progressPct }).eq('id', jobId)
-
+      await supabase.from('processing_jobs').update({ progress: Math.round(((i * 2 + 1) / (VARIANT_PROMPTS.length * 2)) * 100) }).eq('id', jobId)
       const result = await generateWithRetry(enhancedImageBase64, suffix)
 
       const storagePath = `${userId}/${projectId}/models/${imageId}/variant_${variant}.png`
-      const binaryStr = atob(result.image_base64)
-      const bytes = new Uint8Array(binaryStr.length)
-      for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j)
-      const uploadBlob = new Blob([bytes], { type: 'image/png' })
-
-      const { error: storageError } = await supabase.storage
-        .from('project-images')
-        .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
-
-      if (storageError) throw new Error(`Storage upload failed for variant ${variant}: ${storageError.message}`)
+      const { error: storageError } = await supabase.storage.from('project-images')
+        .upload(storagePath, base64ToBlob(result.image_base64), { upsert: true, contentType: 'image/png' })
+      if (storageError) throw new Error(`Storage failed variant ${variant}: ${storageError.message}`)
 
       const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
-
       await supabase.from('project_images').insert({
-        project_id: projectId,
-        storage_url: publicUrlData.publicUrl,
-        type: 'model',
+        project_id: projectId, storage_url: publicUrlData.publicUrl, type: 'model',
         metadata: { variant, jewelry_image_id: imageId },
       })
+      await supabase.from('processing_jobs').update({ progress: Math.round(((i * 2 + 2) / (VARIANT_PROMPTS.length * 2)) * 100) }).eq('id', jobId)
 
-      const uploadPct = Math.round(((i * 2 + 2) / (VARIANT_PROMPTS.length * 2)) * 100)
-      await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', jobId)
-
-      if (i < VARIANT_PROMPTS.length - 1) {
-        await sleep(result.provider === 'Gemini Direct' ? 35000 : 2000)
-      }
+      if (i < VARIANT_PROMPTS.length - 1) await sleep(INTER_REQUEST_DELAY)
     }
-
     await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
     await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'models_generated' })
   } catch (error) {
     console.error('Model render failed:', error)
     await supabase.from('processing_jobs').update({
-      status: 'failed',
-      error_message: error instanceof Error ? error.message : 'Unknown error',
+      status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown error',
     }).eq('id', jobId)
   }
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
     const { enhanced_image_url, project_id, image_id, user_id } = (await req.json()) as RequestBody
-
     if (!enhanced_image_url || !project_id || !image_id || !user_id) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Missing required fields' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({ project_id, image_id, job_type: 'model_render', status: 'processing', progress: 5 })
-      .select()
-      .single()
-
-    if (jobError) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
+      .select().single()
+    if (jobError) return new Response(JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     EdgeRuntime.waitUntil(processModelRenders(job.id, enhanced_image_url, project_id, image_id, user_id))
-
-    return new Response(
-      JSON.stringify({ success: true, job_id: job.id }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ success: true, job_id: job.id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   }
 })

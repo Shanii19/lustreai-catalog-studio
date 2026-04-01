@@ -5,9 +5,6 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
-const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
@@ -31,148 +28,295 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
   const arrayBuffer = await resp.arrayBuffer()
   const bytes = new Uint8Array(arrayBuffer)
   let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
   return btoa(binary)
 }
 
-// Provider 1: Lovable AI Gateway
-async function enhanceWithLovable(imageBase64: string): Promise<{ image_base64: string }> {
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-flash-image',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.' },
-          { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
-        ],
-      }],
-      modalities: ['image', 'text'],
-    }),
-  })
-
-  if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (response.status === 402) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`Lovable gateway error ${response.status}`)
-
-  const result = await response.json()
-  const images = result.choices?.[0]?.message?.images
-  if (images?.[0]?.image_url?.url) {
-    const dataUrl = images[0].image_url.url as string
-    return { image_base64: dataUrl.replace(/^data:image\/\w+;base64,/, '') }
-  }
-  return { image_base64: imageBase64 }
+function base64ToBlob(b64: string, mime = 'image/png'): Blob {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
 }
 
-// Provider 2: Gemini Direct API (free)
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
+
+const ENHANCE_PROMPT = 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.'
+
+// --- Provider 1: Gemini Direct ---
 async function enhanceWithGemini(imageBase64: string): Promise<{ image_base64: string }> {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
+  const key = Deno.env.get('GEMINI_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${key}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove background noise. Keep the jewelry exactly as-is. Return the enhanced image.' },
-            { inlineData: { mimeType: 'image/png', data: imageBase64 } },
-          ],
-        }],
+        contents: [{ parts: [
+          { text: ENHANCE_PROMPT },
+          { inlineData: { mimeType: 'image/png', data: imageBase64 } },
+        ]}],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     }
   )
-
   if (response.status === 429) throw new Error('RATE_LIMITED')
-  if (!response.ok) throw new Error(`Gemini API error ${response.status}`)
-
+  if (!response.ok) throw new Error(`Gemini error ${response.status}`)
   const result = await response.json()
-  const parts = result.candidates?.[0]?.content?.parts
-  const imagePart = parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
-  if (imagePart?.inlineData?.data) {
-    return { image_base64: imagePart.inlineData.data }
-  }
+  const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'))
+  if (imagePart?.inlineData?.data) return { image_base64: imagePart.inlineData.data }
   return { image_base64: imageBase64 }
 }
 
-// Provider 3: Stability AI
+// --- Provider 2: Lovable AI Gateway ---
+async function enhanceWithLovable(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('LOVABLE_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'google/gemini-2.5-flash-image',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: ENHANCE_PROMPT },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+      ]}],
+      modalities: ['image', 'text'],
+    }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Lovable error ${response.status}`)
+  const result = await response.json()
+  const dataUrl = result.choices?.[0]?.message?.images?.[0]?.image_url?.url
+  if (dataUrl) return { image_base64: (dataUrl as string).replace(/^data:image\/\w+;base64,/, '') }
+  return { image_base64: imageBase64 }
+}
+
+// --- Provider 3: OpenAI Image Edit ---
+async function enhanceWithOpenAI(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('OpenAI_Image_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const fd = new FormData()
+  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('prompt', ENHANCE_PROMPT)
+  fd.append('model', 'gpt-image-1')
+  fd.append('size', '1024x1024')
+  fd.append('response_format', 'b64_json')
+
+  const response = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: fd,
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`OpenAI error ${response.status}`)
+  const result = await response.json()
+  if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json }
+  throw new Error('OpenAI returned no image')
+}
+
+// --- Provider 4: Grok (xAI) ---
+async function enhanceWithGrok(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('GROK_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'grok-2-image',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: ENHANCE_PROMPT },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+      ]}],
+    }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`Grok error ${response.status}`)
+  const result = await response.json()
+  const url = result.choices?.[0]?.message?.content?.find?.((c: any) => c.type === 'image_url')?.image_url?.url
+  if (url) {
+    if (url.startsWith('data:')) return { image_base64: url.replace(/^data:image\/\w+;base64,/, '') }
+    const imgResp = await fetch(url)
+    return { image_base64: arrayBufferToBase64(await imgResp.arrayBuffer()) }
+  }
+  throw new Error('Grok returned no image')
+}
+
+// --- Provider 5: Stability AI ---
 async function enhanceWithStability(imageBase64: string): Promise<{ image_base64: string }> {
-  if (!STABILITY_API_KEY) throw new Error('Stability_API_KEY not configured')
+  const key = Deno.env.get('Stability_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
 
-  const binaryStr = atob(imageBase64)
-  const bytes = new Uint8Array(binaryStr.length)
-  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-  const imageBlob = new Blob([bytes], { type: 'image/png' })
-
-  const formData = new FormData()
-  formData.append('image', imageBlob, 'image.png')
-  formData.append('prompt', 'Enhance this jewelry product image with professional studio lighting, sharpen details, increase clarity and vibrancy. High quality product photography.')
-  formData.append('output_format', 'png')
-  formData.append('mode', 'image-to-image')
-  formData.append('strength', '0.35')
+  const fd = new FormData()
+  fd.append('image', base64ToBlob(imageBase64), 'image.png')
+  fd.append('prompt', 'Enhance jewelry product image with professional studio lighting, sharpen details, increase clarity and vibrancy.')
+  fd.append('output_format', 'png')
+  fd.append('mode', 'image-to-image')
+  fd.append('strength', '0.35')
 
   const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${STABILITY_API_KEY}`,
-      Accept: 'image/*',
-    },
-    body: formData,
+    headers: { Authorization: `Bearer ${key}`, Accept: 'image/*' },
+    body: fd,
   })
-
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Stability API error ${response.status}: ${errText}`)
-  }
-
-  const arrayBuffer = await response.arrayBuffer()
-  const resultBytes = new Uint8Array(arrayBuffer)
-  let binary = ''
-  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
-  return { image_base64: btoa(binary) }
+  if (!response.ok) throw new Error(`Stability error ${response.status}`)
+  return { image_base64: arrayBufferToBase64(await response.arrayBuffer()) }
 }
 
-// Try all providers in order
+// --- Provider 6: Ideogram v3 Turbo ---
+async function enhanceWithIdeogram(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('ideogram_v3_turbo_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const fd = new FormData()
+  fd.append('image_file', base64ToBlob(imageBase64), 'image.png')
+  fd.append('image_request', JSON.stringify({
+    prompt: 'Enhance this jewelry product photo: professional studio lighting, sharper details, vibrant colors, clean background. Keep the jewelry identical.',
+    model: 'V_3_TURBO',
+    magic_prompt_option: 'AUTO',
+    style_type: 'REALISTIC',
+  }))
+
+  const response = await fetch('https://api.ideogram.ai/remix', {
+    method: 'POST',
+    headers: { 'Api-Key': key },
+    body: fd,
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Ideogram error ${response.status}`)
+  const result = await response.json()
+  const imgUrl = result.data?.[0]?.url
+  if (imgUrl) {
+    const imgResp = await fetch(imgUrl)
+    return { image_base64: arrayBufferToBase64(await imgResp.arrayBuffer()) }
+  }
+  throw new Error('Ideogram returned no image')
+}
+
+// --- Provider 7: Imagen 4 (Google) ---
+async function enhanceWithImagen(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('imagen_4_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/imagen-4:generateImages?key=${key}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'Enhanced professional studio photograph of jewelry: improved lighting, sharper details, vibrant colors, clean background, ultra high quality product photography.',
+        referenceImages: [{ referenceImage: { inlineData: { mimeType: 'image/png', data: imageBase64 } }, referenceType: 'STYLE' }],
+        config: { numberOfImages: 1, outputOptions: { mimeType: 'image/png' } },
+      }),
+    }
+  )
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`Imagen error ${response.status}`)
+  const result = await response.json()
+  if (result.generatedImages?.[0]?.image?.imageBytes) return { image_base64: result.generatedImages[0].image.imageBytes }
+  throw new Error('Imagen returned no image')
+}
+
+// --- Provider 8: Hugging Face ---
+async function enhanceWithHuggingFace(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('Hugging_Face_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs: 'Enhanced professional studio photograph of jewelry with perfect lighting, sharp details, vibrant colors, clean white background' }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 503) throw new Error('RATE_LIMITED')
+  if (!response.ok) throw new Error(`HuggingFace error ${response.status}`)
+  return { image_base64: arrayBufferToBase64(await response.arrayBuffer()) }
+}
+
+// --- Provider 9: Flux ---
+async function enhanceWithFlux(imageBase64: string): Promise<{ image_base64: string }> {
+  const key = Deno.env.get('FLUX_API_KEY') || Deno.env.get('flux_2_pro_API_KEY')
+  if (!key) throw new Error('NOT_CONFIGURED')
+
+  const response = await fetch('https://api.bfl.ml/v1/flux-pro-1.1', {
+    method: 'POST',
+    headers: { 'X-Key': key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: 'Enhanced professional studio photograph of jewelry with perfect lighting, sharp details, vibrant colors, clean white background, ultra high quality',
+      width: 1024, height: 1024,
+    }),
+  })
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) throw new Error(`Flux error ${response.status}`)
+  const { id: taskId } = await response.json()
+
+  for (let i = 0; i < 30; i++) {
+    await sleep(2000)
+    const sr = await fetch(`https://api.bfl.ml/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
+    const status = await sr.json()
+    if (status.status === 'Ready' && status.result?.sample) {
+      const imgResp = await fetch(status.result.sample)
+      return { image_base64: arrayBufferToBase64(await imgResp.arrayBuffer()) }
+    }
+    if (status.status === 'Error') throw new Error('Flux generation failed')
+  }
+  throw new Error('Flux timeout')
+}
+
+// === Fallback chain ===
 async function enhanceWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
-  const providers = [
+  const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
     { name: 'Gemini Direct', fn: () => enhanceWithGemini(imageBase64) },
+    { name: 'OpenAI', fn: () => enhanceWithOpenAI(imageBase64) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(imageBase64) },
+    { name: 'Grok (xAI)', fn: () => enhanceWithGrok(imageBase64) },
+    { name: 'Ideogram', fn: () => enhanceWithIdeogram(imageBase64) },
     { name: 'Stability AI', fn: () => enhanceWithStability(imageBase64) },
+    { name: 'Imagen 4', fn: () => enhanceWithImagen(imageBase64) },
+    { name: 'Flux', fn: () => enhanceWithFlux(imageBase64) },
+    { name: 'Hugging Face', fn: () => enhanceWithHuggingFace(imageBase64) },
   ]
 
+  const errors: string[] = []
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name === 'Gemini Direct' ? 2 : 1
-    for (let rlAttempt = 0; rlAttempt < maxRateLimitRetries; rlAttempt++) {
+    for (let rl = 0; rl < 2; rl++) {
       try {
-        console.log(`Trying ${provider.name}${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
+        console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)
         const result = await provider.fn()
         console.log(`✅ ${provider.name} succeeded`)
         return result
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error)
         console.warn(`❌ ${provider.name} failed: ${msg}`)
-        if (msg === 'RATE_LIMITED' && rlAttempt < maxRateLimitRetries - 1) {
-          const rlDelay = 5000 * (rlAttempt + 1)
-          console.log(`Rate limited, waiting ${rlDelay / 1000}s before retry...`)
-          await sleep(rlDelay)
+        errors.push(`${provider.name}: ${msg}`)
+        if (msg === 'NOT_CONFIGURED') break
+        if (msg === 'CREDITS_EXHAUSTED') break
+        if (msg === 'RATE_LIMITED' && rl < 1) {
+          console.log(`Rate limited, waiting 5s...`)
+          await sleep(5000)
           continue
         }
         break
       }
     }
   }
-  throw new Error('All image providers failed')
+  throw new Error(`All providers failed: ${errors.join('; ')}`)
 }
 
 async function enhanceWithRetry(imageBase64: string, retries = MAX_RETRIES): Promise<{ image_base64: string }> {
@@ -184,9 +328,7 @@ async function enhanceWithRetry(imageBase64: string, retries = MAX_RETRIES): Pro
         const delay = RETRY_DELAYS[attempt] || 30000
         console.log(`Enhancement attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
         await sleep(delay)
-      } else {
-        throw error
-      }
+      } else throw error
     }
   }
   throw new Error('Enhancement failed after all retries')
@@ -194,87 +336,56 @@ async function enhanceWithRetry(imageBase64: string, retries = MAX_RETRIES): Pro
 
 async function processEnhancement(jobId: string, imageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
-
     const imageBase64 = await fetchImageAsBase64(imageUrl)
     const result = await enhanceWithRetry(imageBase64)
-
     await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', jobId)
 
     const storagePath = `${userId}/${projectId}/enhanced/enhanced_${imageId}.png`
-    const binaryStr = atob(result.image_base64)
-    const bytes = new Uint8Array(binaryStr.length)
-    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-    const uploadBlob = new Blob([bytes], { type: 'image/png' })
-
+    const uploadBlob = base64ToBlob(result.image_base64)
     const { error: storageError } = await supabase.storage
       .from('project-images')
       .upload(storagePath, uploadBlob, { upsert: true, contentType: 'image/png' })
-
     if (storageError) throw new Error(`Storage upload failed: ${storageError.message}`)
 
     const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
-
     await supabase.from('project_images').insert({
-      project_id: projectId,
-      storage_url: publicUrlData.publicUrl,
-      type: 'enhanced',
+      project_id: projectId, storage_url: publicUrlData.publicUrl, type: 'enhanced',
       metadata: { original_image_id: imageId },
     })
-
     await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
     await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'images_enhanced' })
   } catch (error) {
     console.error('Enhancement failed:', error)
     await supabase.from('processing_jobs').update({
-      status: 'failed',
-      error_message: error instanceof Error ? error.message : 'Unknown error',
+      status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown error',
     }).eq('id', jobId)
   }
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
     const { image_url, project_id, image_id, user_id } = await req.json() as RequestBody
-
     if (!image_url || !project_id || !image_id || !user_id) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Missing required fields' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({ project_id, image_id, job_type: 'enhance', status: 'processing', progress: 5 })
-      .select()
-      .single()
-
+      .select().single()
     if (jobError) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Failed to create job', details: jobError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
-
     EdgeRuntime.waitUntil(processEnhancement(job.id, image_url, project_id, image_id, user_id))
-
-    return new Response(
-      JSON.stringify({ success: true, job_id: job.id }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ success: true, job_id: job.id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'Invalid request', details: error instanceof Error ? error.message : 'Unknown error' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   }
 })

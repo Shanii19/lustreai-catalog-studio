@@ -5,13 +5,12 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!
-const GEMINI_MODEL = 'gemini-2.5-flash-image'
+const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const MAX_RETRIES = 4
-const RETRY_DELAYS = [10000, 30000, 60000, 60000]
+const RETRY_DELAYS = [5000, 10000, 20000, 30000]
 
 interface RequestBody {
   jewelry_image_url: string
@@ -47,37 +46,38 @@ async function generateZoomImage(
   jewelryImageBase64: string,
   prompt: string
 ): Promise<{ image_base64: string }> {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail faithfully. Generate a photorealistic 4K product photograph.` },
-            { inline_data: { mime_type: 'image/png', data: jewelryImageBase64 } },
-          ],
-        }],
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-      }),
-    }
-  )
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'google/gemini-2.5-flash-image',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: `${prompt}. Use the provided jewelry image as the exact reference — reproduce every detail faithfully. Generate a photorealistic 4K product photograph.` },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${jewelryImageBase64}` } },
+        ],
+      }],
+      modalities: ['image', 'text'],
+    }),
+  })
 
   if (response.status === 429) throw new Error('Rate limited — please try again later')
-  if (response.status === 404 || response.status === 410) {
-    const errText = await response.text()
-    throw new Error(`Gemini model unavailable (${response.status}). Verify the model name and availability. ${errText}`)
-  }
+  if (response.status === 402) throw new Error('AI credits exhausted — please add funds')
   if (!response.ok) {
     const errText = await response.text()
-    throw new Error(`Gemini API error ${response.status}: ${errText}`)
+    throw new Error(`AI gateway error ${response.status}: ${errText}`)
   }
 
   const result = await response.json()
-  const parts = result.candidates?.[0]?.content?.parts || []
-  for (const part of parts) {
-    if (part.inlineData?.data) return { image_base64: part.inlineData.data }
+  const images = result.choices?.[0]?.message?.images
+  if (images?.[0]?.image_url?.url) {
+    const dataUrl = images[0].image_url.url as string
+    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+    return { image_base64: base64 }
   }
 
   throw new Error('AI model did not return an image')
@@ -93,8 +93,8 @@ async function generateWithRetry(
       return await generateZoomImage(imageBase64, prompt)
     } catch (error) {
       if (attempt < retries) {
-        const delay = RETRY_DELAYS[attempt] || 60000
-        console.log(`Zoom gen attempt ${attempt + 1} failed, retrying in ${delay / 1000}s...`)
+        const delay = RETRY_DELAYS[attempt] || 30000
+        console.log(`Zoom gen attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : error}, retrying in ${delay / 1000}s...`)
         await sleep(delay)
       } else {
         throw error
@@ -142,12 +142,13 @@ async function processZoomShots(jobId: string, jewelryImageUrl: string, projectI
       const uploadPct = Math.round(((i * 2 + 2) / (ZOOM_SHOTS.length * 2)) * 100)
       await supabase.from('processing_jobs').update({ progress: uploadPct }).eq('id', jobId)
 
-      if (i < ZOOM_SHOTS.length - 1) await sleep(1000)
+      if (i < ZOOM_SHOTS.length - 1) await sleep(2000)
     }
 
     await supabase.from('processing_jobs').update({ status: 'complete', progress: 100 }).eq('id', jobId)
     await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'zoom_shots_generated' })
   } catch (error) {
+    console.error('Zoom generation failed:', error)
     await supabase.from('processing_jobs').update({
       status: 'failed',
       error_message: error instanceof Error ? error.message : 'Unknown error',

@@ -428,6 +428,15 @@ async function enhanceWithRetry(sourceImage: SourceImage, userId: string, retrie
 
 async function processEnhancement(jobId: string, imageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  // Safety timeout: mark job failed if processing takes too long (edge functions have ~150s limit)
+  const safetyTimer = setTimeout(async () => {
+    console.error('Safety timeout reached — marking job as failed')
+    await supabase.from('processing_jobs').update({
+      status: 'failed', error_message: 'Processing timed out. Please retry.',
+    }).eq('id', jobId).eq('status', 'processing')
+  }, 120_000) // 120s safety net
+
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
     const sourceImage = await fetchImageAsBase64(imageUrl)
@@ -453,6 +462,8 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
     await supabase.from('processing_jobs').update({
       status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown error',
     }).eq('id', jobId)
+  } finally {
+    clearTimeout(safetyTimer)
   }
 }
 

@@ -380,12 +380,12 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
     console.warn('User enhancement key is present but prefix is unrecognized, falling back to project providers')
   }
 
-  // Gemini free tier: ~10 RPM, resets per minute. Use longer waits with backoff.
-  const RATE_LIMIT_WAITS = [15000, 30000, 60000] // 15s, 30s, 60s
+  // Keep retries short so the edge function doesn't get killed mid-flight
+  const RATE_LIMIT_WAITS = [5000, 10000] // 5s, 10s
 
   const errors: string[] = []
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name.includes('Gemini Direct') ? 3 : 1
+    const maxRateLimitRetries = provider.name.includes('Gemini Direct') ? 2 : 1
     for (let rl = 0; rl <= maxRateLimitRetries; rl++) {
       try {
         console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)

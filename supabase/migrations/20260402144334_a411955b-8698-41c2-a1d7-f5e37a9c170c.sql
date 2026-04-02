@@ -1,0 +1,1 @@
+UPDATE processing_jobs SET status = 'failed', error_message = 'Timed out — Gemini rate limited. Please retry.' WHERE id = 'dfba1017-ab6b-4235-aa93-097c7bcd5695' AND status = 'processing';

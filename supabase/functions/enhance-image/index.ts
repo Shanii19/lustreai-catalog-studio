@@ -380,12 +380,12 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
     console.warn('User enhancement key is present but prefix is unrecognized, falling back to project providers')
   }
 
-  // Gemini free tier: ~10 RPM, resets per minute. Use longer waits with backoff.
-  const RATE_LIMIT_WAITS = [15000, 30000, 60000] // 15s, 30s, 60s
+  // Keep retries short so the edge function doesn't get killed mid-flight
+  const RATE_LIMIT_WAITS = [5000, 10000] // 5s, 10s
 
   const errors: string[] = []
   for (const provider of providers) {
-    const maxRateLimitRetries = provider.name.includes('Gemini Direct') ? 3 : 1
+    const maxRateLimitRetries = provider.name.includes('Gemini Direct') ? 2 : 1
     for (let rl = 0; rl <= maxRateLimitRetries; rl++) {
       try {
         console.log(`Trying ${provider.name}${rl > 0 ? ` (retry ${rl})` : ''}...`)
@@ -428,6 +428,15 @@ async function enhanceWithRetry(sourceImage: SourceImage, userId: string, retrie
 
 async function processEnhancement(jobId: string, imageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  // Safety timeout: mark job failed if processing takes too long (edge functions have ~150s limit)
+  const safetyTimer = setTimeout(async () => {
+    console.error('Safety timeout reached — marking job as failed')
+    await supabase.from('processing_jobs').update({
+      status: 'failed', error_message: 'Processing timed out. Please retry.',
+    }).eq('id', jobId).eq('status', 'processing')
+  }, 120_000) // 120s safety net
+
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
     const sourceImage = await fetchImageAsBase64(imageUrl)
@@ -453,6 +462,8 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
     await supabase.from('processing_jobs').update({
       status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown error',
     }).eq('id', jobId)
+  } finally {
+    clearTimeout(safetyTimer)
   }
 }
 

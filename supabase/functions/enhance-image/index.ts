@@ -118,7 +118,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(bin)
 }
 
-const ENHANCE_PROMPT = 'Enhance this jewelry product image: improve lighting, sharpen details, increase clarity and color vibrancy, remove any background noise, make it look professional and studio-quality. Keep the jewelry exactly as-is, only improve the image quality. Return the enhanced image.'
+const ENHANCE_PROMPT = 'Enhance this jewelry product image and completely remove the background. Output the jewelry item on a pure clean white background with no shadows, no surface, no reflections on the background. Improve lighting, sharpen details, increase clarity and color vibrancy. Make it look like a professional e-commerce product photo with the jewelry isolated on a solid white background. Keep the jewelry itself exactly as-is, only improve image quality and remove all background elements. Return the enhanced image.'
 
 // --- Provider 1: Gemini Direct ---
 async function enhanceWithGemini(sourceImage: SourceImage, overrideKey?: string | null): Promise<{ image_base64: string }> {

@@ -224,11 +224,17 @@ const Project = () => {
               setStage(3);
               if (user && id) {
                 // Use the selected model images for zoom generation, not originals
-                const modelImages = selectedModels.map((sm) => ({
-                  id: sm.imageId,
-                  url: sm.modelUrl,
-                  name: `model_${sm.imageId}`,
-                }));
+                const modelImages = selectedModels
+                  .filter((sm) => sm.modelUrl && sm.imageId)
+                  .map((sm) => ({
+                    id: sm.imageId,
+                    url: sm.modelUrl,
+                    name: `model_${sm.imageId}`,
+                  }));
+                if (modelImages.length === 0) {
+                  toast.error("No selected model images found — cannot start zoom generation");
+                  return;
+                }
                 setUploadedImages((prev) => {
                   // Store selected model URLs for the zoom stage to reference
                   return prev;

@@ -19,6 +19,12 @@ async function check(name: string, fn: () => Promise<Response>): Promise<Result>
   }
 }
 
+function withTimeout(url: string, init: RequestInit = {}, ms = 8000): Promise<Response> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(t))
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -36,20 +42,21 @@ Deno.serve(async (req) => {
   const CLIPDROP = Deno.env.get('clipdrop_api')
 
   const results: Result[] = []
+  const F = withTimeout
 
   // Gemini (used for enhance, model, zoom, bg-remove)
   results.push(await check('Gemini (GEMINI_API_KEY)', () =>
-    fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI}`)
+    F(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI}`)
   ))
 
   // Imagen
   results.push(await check('Imagen-4 (imagen_4_API_KEY)', () =>
-    fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${IMAGEN}`)
+    F(`https://generativelanguage.googleapis.com/v1beta/models?key=${IMAGEN}`)
   ))
 
   // Lovable AI Gateway
   results.push(await check('Lovable AI Gateway (LOVABLE_API_KEY)', () =>
-    fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    F('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${LOVABLE}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'google/gemini-2.5-flash-lite', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
@@ -58,47 +65,47 @@ Deno.serve(async (req) => {
 
   // OpenAI Images
   results.push(await check('OpenAI Images (OpenAI_Image_API_KEY)', () =>
-    fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${OPENAI}` } })
+    F('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${OPENAI}` } })
   ))
 
   // Grok / xAI
   results.push(await check('Grok xAI (GROK_API_KEY)', () =>
-    fetch('https://api.x.ai/v1/models', { headers: { Authorization: `Bearer ${GROK}` } })
+    F('https://api.x.ai/v1/models', { headers: { Authorization: `Bearer ${GROK}` } })
   ))
 
   // Stability
   results.push(await check('Stability (Stability_API_KEY)', () =>
-    fetch('https://api.stability.ai/v1/user/account', { headers: { Authorization: `Bearer ${STABILITY}` } })
+    F('https://api.stability.ai/v1/user/account', { headers: { Authorization: `Bearer ${STABILITY}` } })
   ))
 
   // Ideogram (no public balance endpoint; do tiny remix probe with HEAD-ish)
   results.push(await check('Ideogram (ideogram_v3_turbo_API_KEY)', () =>
-    fetch('https://api.ideogram.ai/api/v1/images', { headers: { 'Api-Key': IDEOGRAM || '' } })
+    F('https://api.ideogram.ai/api/v1/images', { headers: { 'Api-Key': IDEOGRAM || '' } })
   ))
 
   // Hugging Face
   results.push(await check('Hugging Face (Hugging_Face_API_KEY)', () =>
-    fetch('https://huggingface.co/api/whoami-v2', { headers: { Authorization: `Bearer ${HF}` } })
+    F('https://huggingface.co/api/whoami-v2', { headers: { Authorization: `Bearer ${HF}` } })
   ))
 
   // FLUX / BFL
   results.push(await check('FLUX BFL (FLUX_API_KEY)', () =>
-    fetch('https://api.bfl.ml/v1/get_result?id=test', { headers: { 'X-Key': FLUX || '' } })
+    F('https://api.bfl.ml/v1/get_result?id=test', { headers: { 'X-Key': FLUX || '' } })
   ))
 
   // Remove.bg
   results.push(await check('Remove.bg (Remove_bg)', () =>
-    fetch('https://api.remove.bg/v1.0/account', { headers: { 'X-Api-Key': REMOVEBG || '' } })
+    F('https://api.remove.bg/v1.0/account', { headers: { 'X-Api-Key': REMOVEBG || '' } })
   ))
 
   // Photoroom
   results.push(await check('Photoroom (photoroom_api)', () =>
-    fetch('https://image-api.photoroom.com/v2/account', { headers: { 'x-api-key': PHOTOROOM || '' } })
+    F('https://image-api.photoroom.com/v2/account', { headers: { 'x-api-key': PHOTOROOM || '' } })
   ))
 
   // Clipdrop
   results.push(await check('Clipdrop (clipdrop_api)', () =>
-    fetch('https://clipdrop-api.co/remove-background/v1', { method: 'POST', headers: { 'x-api-key': CLIPDROP || '' } })
+    F('https://clipdrop-api.co/remove-background/v1', { method: 'POST', headers: { 'x-api-key': CLIPDROP || '' } })
   ))
 
   return new Response(JSON.stringify({ results }, null, 2), {

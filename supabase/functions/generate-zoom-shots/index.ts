@@ -242,7 +242,7 @@ async function genImagen(_imageBase64: string, prompt: string): Promise<{ image_
 async function genFlux(_imageBase64: string, prompt: string): Promise<{ image_base64: string; provider: string }> {
   const key = Deno.env.get('FLUX_API_KEY') || Deno.env.get('flux_2_pro_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
-  const response = await fetch('https://api.bfl.ml/v1/flux-pro-1.1', {
+  const response = await fetch('https://api.bfl.ai/v1/flux-pro-1.1', {
     method: 'POST', headers: { 'X-Key': key, 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt: `${prompt}. Photorealistic 4K.`, width: 1024, height: 1024 }),
   })
@@ -251,7 +251,7 @@ async function genFlux(_imageBase64: string, prompt: string): Promise<{ image_ba
   const { id: taskId } = await response.json()
   for (let i = 0; i < 30; i++) {
     await sleep(2000)
-    const sr = await fetch(`https://api.bfl.ml/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
+    const sr = await fetch(`https://api.bfl.ai/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
     const status = await sr.json()
     if (status.status === 'Ready' && status.result?.sample) {
       return { image_base64: arrayBufferToBase64(await (await fetch(status.result.sample)).arrayBuffer()), provider: 'Flux' }
@@ -279,8 +279,6 @@ async function generateWithFallback(sourceImage: SourceImage, prompt: string): P
   const providers: { name: string; fn: () => Promise<{ image_base64: string; provider: string }> }[] = [
     { name: 'Gemini Direct', fn: () => genGemini(sourceImage, prompt) },
     { name: 'OpenAI', fn: () => genOpenAI(sourceImage, prompt) },
-    { name: 'Grok (xAI)', fn: () => genGrok(sourceImage, prompt) },
-    { name: 'Ideogram', fn: () => genIdeogram(sourceImage, prompt) },
     { name: 'Stability AI', fn: () => genStability(sourceImage, prompt) },
     { name: 'Lovable AI', fn: () => genLovable(sourceImage, prompt) },
   ]

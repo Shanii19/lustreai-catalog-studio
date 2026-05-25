@@ -8,6 +8,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
+const REMOVEBG_API_KEY = Deno.env.get('Remove_bg')
+const PHOTOROOM_API_KEY = Deno.env.get('photoroom_api')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
@@ -38,6 +40,73 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
 }
 
 const BG_REMOVE_PROMPT = 'Remove the background from this image completely. Make the background fully transparent/white. Keep only the jewelry item itself with no background elements, shadows on background, or surface reflections. Output a clean product photo of just the jewelry on a pure white background.'
+
+// Provider 0a: Remove.bg (dedicated bg removal, 50 free calls/month)
+async function removeWithRemoveBg(imageBase64: string): Promise<{ image_base64: string }> {
+  if (!REMOVEBG_API_KEY) throw new Error('Remove_bg not configured')
+
+  const binaryStr = atob(imageBase64)
+  const bytes = new Uint8Array(binaryStr.length)
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+  const imageBlob = new Blob([bytes], { type: 'image/png' })
+
+  const formData = new FormData()
+  formData.append('image_file', imageBlob, 'image.png')
+  formData.append('size', 'auto')
+  formData.append('bg_color', 'ffffff')
+
+  const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+    method: 'POST',
+    headers: { 'X-Api-Key': REMOVEBG_API_KEY },
+    body: formData,
+  })
+
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`Remove.bg error ${response.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  const resultBytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
+  return { image_base64: btoa(binary) }
+}
+
+// Provider 0b: Photoroom (dedicated bg removal, ~5k free calls/month)
+async function removeWithPhotoroom(imageBase64: string): Promise<{ image_base64: string }> {
+  if (!PHOTOROOM_API_KEY) throw new Error('photoroom_api not configured')
+
+  const binaryStr = atob(imageBase64)
+  const bytes = new Uint8Array(binaryStr.length)
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+  const imageBlob = new Blob([bytes], { type: 'image/png' })
+
+  const formData = new FormData()
+  formData.append('image_file', imageBlob, 'image.png')
+  formData.append('bg_color', 'FFFFFF')
+
+  const response = await fetch('https://sdk.photoroom.com/v1/segment', {
+    method: 'POST',
+    headers: { 'x-api-key': PHOTOROOM_API_KEY, Accept: 'image/png' },
+    body: formData,
+  })
+
+  if (response.status === 429) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`Photoroom error ${response.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  const resultBytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
+  return { image_base64: btoa(binary) }
+}
 
 // Provider 1: Lovable AI Gateway
 async function removeWithLovable(imageBase64: string): Promise<{ image_base64: string }> {
@@ -144,6 +213,8 @@ async function removeWithStability(imageBase64: string): Promise<{ image_base64:
 
 async function removeWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
+    { name: 'Photoroom', fn: () => removeWithPhotoroom(imageBase64) },
+    { name: 'Remove.bg', fn: () => removeWithRemoveBg(imageBase64) },
     { name: 'Gemini Direct', fn: () => removeWithGemini(imageBase64) },
     { name: 'Lovable AI', fn: () => removeWithLovable(imageBase64) },
     { name: 'Stability AI', fn: () => removeWithStability(imageBase64) },

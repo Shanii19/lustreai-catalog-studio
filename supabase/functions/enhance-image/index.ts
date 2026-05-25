@@ -336,7 +336,7 @@ async function enhanceWithFlux(imageBase64: string): Promise<{ image_base64: str
   const key = Deno.env.get('FLUX_API_KEY') || Deno.env.get('flux_2_pro_API_KEY')
   if (!key) throw new Error('NOT_CONFIGURED')
 
-  const response = await fetch('https://api.bfl.ml/v1/flux-pro-1.1', {
+  const response = await fetch('https://api.bfl.ai/v1/flux-pro-1.1', {
     method: 'POST',
     headers: { 'X-Key': key, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -351,7 +351,7 @@ async function enhanceWithFlux(imageBase64: string): Promise<{ image_base64: str
 
   for (let i = 0; i < 30; i++) {
     await sleep(2000)
-    const sr = await fetch(`https://api.bfl.ml/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
+    const sr = await fetch(`https://api.bfl.ai/v1/get_result?id=${taskId}`, { headers: { 'X-Key': key } })
     const status = await sr.json()
     if (status.status === 'Ready' && status.result?.sample) {
       const imgResp = await fetch(status.result.sample)
@@ -370,8 +370,6 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
   const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
     { name: userKeyType === 'gemini' ? 'Gemini Direct (Your Key)' : 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage, userKeyType === 'gemini' ? userEnhancementKey : null) },
     { name: userKeyType === 'openai' ? 'OpenAI (Your Key)' : 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage, userKeyType === 'openai' ? userEnhancementKey : null) },
-    { name: userKeyType === 'grok' ? 'Grok (xAI) (Your Key)' : 'Grok (xAI)', fn: () => enhanceWithGrok(sourceImage, userKeyType === 'grok' ? userEnhancementKey : null) },
-    { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
     { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]

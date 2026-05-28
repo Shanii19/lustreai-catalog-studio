@@ -109,6 +109,38 @@ async function removeWithPhotoroom(imageBase64: string): Promise<{ image_base64:
   return { image_base64: btoa(binary) }
 }
 
+// Provider 0c: Hugging Face — briaai/RMBG-1.4 (free dedicated bg removal)
+async function removeWithHuggingFace(imageBase64: string): Promise<{ image_base64: string }> {
+  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging_Face_API_KEY not configured')
+
+  const binaryStr = atob(imageBase64)
+  const bytes = new Uint8Array(binaryStr.length)
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+
+  const response = await fetch('https://api-inference.huggingface.co/models/briaai/RMBG-1.4', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+      'Content-Type': 'image/png',
+      Accept: 'image/png',
+    },
+    body: bytes,
+  })
+
+  if (response.status === 429 || response.status === 503) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`HuggingFace error ${response.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  const resultBytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
+  return { image_base64: btoa(binary) }
+}
+
 // Provider 1: Lovable AI Gateway
 async function removeWithLovable(imageBase64: string): Promise<{ image_base64: string }> {
   const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {

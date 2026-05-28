@@ -117,7 +117,7 @@ async function removeWithHuggingFace(imageBase64: string): Promise<{ image_base6
   const bytes = new Uint8Array(binaryStr.length)
   for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
 
-  const response = await fetch('https://api-inference.huggingface.co/models/briaai/RMBG-1.4', {
+  const response = await fetch('https://router.huggingface.co/hf-inference/models/briaai/RMBG-1.4', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,

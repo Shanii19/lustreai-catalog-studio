@@ -10,6 +10,7 @@ const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 const STABILITY_API_KEY = Deno.env.get('Stability_API_KEY')
 const REMOVEBG_API_KEY = Deno.env.get('Remove_bg')
 const PHOTOROOM_API_KEY = Deno.env.get('photoroom_api')
+const HUGGINGFACE_API_KEY = Deno.env.get('Hugging_Face_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
@@ -99,6 +100,38 @@ async function removeWithPhotoroom(imageBase64: string): Promise<{ image_base64:
   if (!response.ok) {
     const errText = await response.text()
     throw new Error(`Photoroom error ${response.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  const resultBytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < resultBytes.length; i++) binary += String.fromCharCode(resultBytes[i])
+  return { image_base64: btoa(binary) }
+}
+
+// Provider 0c: Hugging Face — briaai/RMBG-1.4 (free dedicated bg removal)
+async function removeWithHuggingFace(imageBase64: string): Promise<{ image_base64: string }> {
+  if (!HUGGINGFACE_API_KEY) throw new Error('Hugging_Face_API_KEY not configured')
+
+  const binaryStr = atob(imageBase64)
+  const bytes = new Uint8Array(binaryStr.length)
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+
+  const response = await fetch('https://router.huggingface.co/hf-inference/models/briaai/RMBG-1.4', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+      'Content-Type': 'image/png',
+      Accept: 'image/png',
+    },
+    body: bytes,
+  })
+
+  if (response.status === 429 || response.status === 503) throw new Error('RATE_LIMITED')
+  if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
+  if (!response.ok) {
+    const errText = await response.text()
+    throw new Error(`HuggingFace error ${response.status}: ${errText.slice(0, 200)}`)
   }
 
   const arrayBuffer = await response.arrayBuffer()
@@ -213,6 +246,7 @@ async function removeWithStability(imageBase64: string): Promise<{ image_base64:
 
 async function removeWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
+    { name: 'Hugging Face RMBG', fn: () => removeWithHuggingFace(imageBase64) },
     { name: 'Photoroom', fn: () => removeWithPhotoroom(imageBase64) },
     { name: 'Remove.bg', fn: () => removeWithRemoveBg(imageBase64) },
     { name: 'Gemini Direct', fn: () => removeWithGemini(imageBase64) },

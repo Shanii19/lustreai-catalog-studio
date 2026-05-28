@@ -246,6 +246,7 @@ async function removeWithStability(imageBase64: string): Promise<{ image_base64:
 
 async function removeWithFallback(imageBase64: string): Promise<{ image_base64: string }> {
   const providers = [
+    { name: 'Hugging Face RMBG', fn: () => removeWithHuggingFace(imageBase64) },
     { name: 'Photoroom', fn: () => removeWithPhotoroom(imageBase64) },
     { name: 'Remove.bg', fn: () => removeWithRemoveBg(imageBase64) },
     { name: 'Gemini Direct', fn: () => removeWithGemini(imageBase64) },

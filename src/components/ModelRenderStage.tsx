@@ -71,45 +71,58 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
   // Fetch actual model image URLs from project_images when jobs complete
   useEffect(() => {
     if (!hasRealJobs) return;
-    const completedImageIds = images
-      .filter((img) => {
-        const job = jobs.find((j) => j.image_id === img.id && j.job_type === "model_render" && j.status === "complete");
-        return !!job;
-      })
-      .map((img) => img.id);
+    const projectId = jobs[0]?.project_id;
+    if (!projectId) return;
 
-    if (completedImageIds.length === 0) return;
+    let cancelled = false;
 
-    // Fetch model images from project_images table
-    import("@/integrations/supabase/client").then(({ supabase }) => {
-      // Get the project_id from the first job
-      const projectId = jobs[0]?.project_id;
-      if (!projectId) return;
-      supabase
+    const fetchModelImages = async () => {
+      const { supabase } = await import("@/integrations/supabase/client");
+      const { data } = await supabase
         .from("project_images")
         .select("id, storage_url, metadata")
         .eq("project_id", projectId)
-        .eq("type", "model")
-        .then(({ data }) => {
-          if (!data) return;
-          setModels((prev) => {
-            const next = { ...prev };
-            completedImageIds.forEach((imageId) => {
-              const imgModels = data.filter((d: any) => d.metadata?.jewelry_image_id === imageId);
-              if (imgModels.length > 0 && next[imageId]) {
-                const variants = [...next[imageId]];
-                imgModels.forEach((m: any, idx: number) => {
-                  if (idx < variants.length) {
-                    variants[idx] = { ...variants[idx], url: m.storage_url, done: true, progress: 100 };
-                  }
-                });
-                next[imageId] = variants;
+        .eq("type", "model");
+      if (cancelled || !data) return;
+
+      setModels((prev) => {
+        const next = { ...prev };
+        images.forEach((img) => {
+          const imgModels = data.filter((d: any) => d.metadata?.jewelry_image_id === img.id);
+          if (imgModels.length > 0) {
+            const variants = [...(next[img.id] || [0, 1, 2].map((vi) => ({
+              id: `${img.id}-model-${vi}`,
+              url: "",
+              progress: 0,
+              done: false,
+            })))];
+            imgModels.forEach((m: any, idx: number) => {
+              if (idx < variants.length) {
+                variants[idx] = { ...variants[idx], url: m.storage_url, done: true, progress: 100 };
               }
             });
-            return next;
-          });
+            next[img.id] = variants;
+          }
         });
-    });
+        return next;
+      });
+    };
+
+    fetchModelImages();
+
+    // Poll every 3s while any model_render job is still running
+    const stillRunning = jobs.some(
+      (j) => j.job_type === "model_render" && (j.status === "processing" || j.status === "queued")
+    );
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (stillRunning) {
+      interval = setInterval(fetchModelImages, 3000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+    };
   }, [images, jobs, hasRealJobs]);
 
   // Initialize model generation mock (no real jobs)
@@ -233,7 +246,7 @@ const ModelRenderStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                         <div className="group relative">
                           <img src={v.url} alt={`Model variant ${vi + 1}`} className="w-full h-56 object-cover image-hover" loading="lazy" />
                           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/70 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Button size="sm" className="gap-1.5 gold-glow-hover" onClick={() => handleSelect(img.id, v.id)}>
+                            <Button size="sm" className="gap-1.5 gold-glow-hover" disabled={!v.url} onClick={() => handleSelect(img.id, v.id)}>
                               <Check className="h-3.5 w-3.5" /> Select
                             </Button>
                             <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setLightbox({ imageId: img.id, variantIdx: vi })}>

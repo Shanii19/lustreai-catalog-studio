@@ -247,6 +247,13 @@ const Project = () => {
                 }))
                 .filter((img) => img.url);
 
+              setUploadedImages((prev) =>
+                prev.map((img) => ({
+                  ...img,
+                  url: enhancedForOriginal.get(img.id) || img.url,
+                }))
+              );
+
               if (modelInputs.length === 0) {
                 toast.error("No enhanced images found — cannot start model rendering");
                 return;

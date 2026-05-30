@@ -18,6 +18,11 @@ interface Props {
   onRetry?: (imageId: string) => void;
 }
 
+function isFallbackComplete(errorMessage?: string | null): boolean {
+  if (!errorMessage) return false;
+  return errorMessage.toLowerCase().includes('source_passthrough');
+}
+
 const RATE_LIMIT_COOLDOWN = 60; // seconds
 
 function isRateLimited(errorMessage?: string | null): boolean {
@@ -106,9 +111,10 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
         failed: job.status === "failed",
         progress: job.progress,
         errorMessage: job.error_message,
+        fallback: isFallbackComplete(job.error_message),
       };
     }
-    return { done: mockEnhanced.has(imageId), failed: false, progress: mockEnhanced.has(imageId) ? 100 : 0 };
+    return { done: mockEnhanced.has(imageId), failed: false, progress: mockEnhanced.has(imageId) ? 100 : 0, fallback: false };
   };
 
   const handleCooldownComplete = useCallback((imageId: string) => {
@@ -203,8 +209,13 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                   )
                 ) : status.done ? (
                   <>
-                    <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400">Enhanced ✓</Badge>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400">
+                      {status.fallback ? "Ready ✓" : "Enhanced ✓"}
+                    </Badge>
                     <img src={img.url} alt={`Enhanced ${img.name}`} className="w-full rounded-lg object-cover max-h-64 brightness-110 contrast-105 saturate-110" />
+                    {status.fallback && (
+                      <p className="text-xs text-muted-foreground">External enhancement was unavailable, so this image will continue with the cleaned source version.</p>
+                    )}
                   </>
                 ) : (
                   <>

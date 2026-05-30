@@ -26,6 +26,12 @@ function isRateLimited(errorMessage?: string | null): boolean {
   return lower.includes('rate_limited') || lower.includes('rate limit') || lower.includes('429');
 }
 
+function isCreditsExhausted(errorMessage?: string | null): boolean {
+  if (!errorMessage) return false;
+  const lower = errorMessage.toLowerCase();
+  return lower.includes('credits_exhausted') || lower.includes('billing hard limit') || lower.includes('billing_hard_limit_reached') || lower.includes('insufficient_quota');
+}
+
 function CooldownTimer({ seconds, onComplete, onRetry, imageId }: { seconds: number; onComplete: () => void; onRetry?: (id: string) => void; imageId: string }) {
   const [remaining, setRemaining] = useState(seconds);
 
@@ -142,6 +148,7 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
         {images.map((img) => {
           const status = getStatus(img.id);
           const rateLimited = status.failed && isRateLimited(status.errorMessage);
+          const creditsExhausted = status.failed && isCreditsExhausted(status.errorMessage);
           const inCooldown = cooldowns.has(img.id);
 
           return (
@@ -175,7 +182,9 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                         <div className="flex flex-col items-center gap-2 text-center px-4">
                           <AlertCircle className="h-8 w-8 text-destructive" />
                           <span className="text-sm text-destructive">
-                            {rateLimited
+                            {creditsExhausted
+                              ? "Enhancement provider credits are exhausted. Update an active enhancement key or restore provider credits, then retry."
+                              : rateLimited
                               ? "All providers are rate limited. Waiting for cooldown…"
                               : (status.errorMessage || "Enhancement failed")}
                           </span>

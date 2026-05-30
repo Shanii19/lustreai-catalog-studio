@@ -385,6 +385,7 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
     { name: userKeyType === 'gemini' ? 'Gemini Direct (Your Key)' : 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage, userKeyType === 'gemini' ? userEnhancementKey : null) },
     { name: userKeyType === 'openai' ? 'OpenAI (Your Key)' : 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage, userKeyType === 'openai' ? userEnhancementKey : null) },
     { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
+    { name: 'Flux', fn: () => enhanceWithFlux(sourceImage.base64) },
     { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]

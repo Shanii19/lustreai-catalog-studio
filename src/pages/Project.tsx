@@ -58,15 +58,32 @@ const Project = () => {
   }, [id]);
 
   const handleUploadComplete = async () => {
+    if (!user || !id) return;
     toast.success("Upload complete — starting enhancement");
     setStage(1);
-    // Trigger enhancement for all uploaded images
-    if (user && id) {
-      enhanceAllImages(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
-        if (failed > 0) toast.error(`${failed} image(s) failed to enhance`);
-        if (succeeded > 0) toast.success(`${succeeded} image(s) enhanced successfully`);
-      });
-    }
+
+    // Re-fetch originals from DB so each storage_url reflects the bg-removed version
+    const { data: fresh } = await supabase
+      .from("project_images")
+      .select("id, storage_url")
+      .eq("project_id", id)
+      .eq("type", "original")
+      .order("created_at", { ascending: true });
+
+    const sourceImages = (fresh && fresh.length > 0)
+      ? fresh.map((img) => ({
+          id: img.id,
+          url: img.storage_url,
+          name: img.storage_url.split("/").pop() || "image",
+        }))
+      : uploadedImages;
+
+    setUploadedImages(sourceImages);
+
+    enhanceAllImages(sourceImages, id, user.id).then(({ succeeded, failed }) => {
+      if (failed > 0) toast.error(`${failed} image(s) failed to enhance`);
+      if (succeeded > 0) toast.success(`${succeeded} image(s) enhanced successfully`);
+    });
   };
 
   const handleRetry = async (imageId: string, jobType: "enhance" | "model_render" | "zoom") => {
@@ -201,16 +218,44 @@ const Project = () => {
         {stage === 1 && (
           <EnhanceStage
             images={uploadedImages}
-            onComplete={() => {
+            onComplete={async () => {
               toast.success("Enhancement complete");
               setStage(2);
-              // Trigger model rendering for all images
-              if (user && id) {
-                generateAllModelRenders(uploadedImages, id, user.id).then(({ succeeded, failed }) => {
-                  if (failed > 0) toast.error(`${failed} model render(s) failed`);
-                  if (succeeded > 0) toast.success(`${succeeded} model render(s) complete`);
-                });
+              if (!user || !id) return;
+
+              // Look up the enhanced image URL for each original
+              const { data: enhancedRows } = await supabase
+                .from("project_images")
+                .select("storage_url, metadata, created_at")
+                .eq("project_id", id)
+                .eq("type", "enhanced")
+                .order("created_at", { ascending: false });
+
+              const enhancedForOriginal = new Map<string, string>();
+              (enhancedRows || []).forEach((row: any) => {
+                const origId = row.metadata?.original_image_id;
+                if (origId && !enhancedForOriginal.has(origId)) {
+                  enhancedForOriginal.set(origId, row.storage_url);
+                }
+              });
+
+              const modelInputs = uploadedImages
+                .map((img) => ({
+                  id: img.id,
+                  url: enhancedForOriginal.get(img.id) || "",
+                  name: img.name,
+                }))
+                .filter((img) => img.url);
+
+              if (modelInputs.length === 0) {
+                toast.error("No enhanced images found — cannot start model rendering");
+                return;
               }
+
+              generateAllModelRenders(modelInputs, id, user.id).then(({ succeeded, failed }) => {
+                if (failed > 0) toast.error(`${failed} model render(s) failed`);
+                if (succeeded > 0) toast.success(`${succeeded} model render(s) complete`);
+              });
             }}
             jobs={getJobsByType("enhance")}
             onRetry={(imageId) => handleRetry(imageId, "enhance")}

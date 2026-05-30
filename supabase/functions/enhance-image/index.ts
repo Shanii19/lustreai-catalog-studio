@@ -503,7 +503,7 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
         await supabase.from('processing_jobs').update({
           status: 'complete',
           progress: 100,
-          error_message: null,
+          error_message: 'source_passthrough',
         }).eq('id', jobId)
         return
       } catch (fallbackError) {

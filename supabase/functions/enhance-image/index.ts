@@ -202,7 +202,21 @@ async function enhanceWithOpenAI(sourceImage: SourceImage, overrideKey?: string 
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`OpenAI error ${response.status}: ${(await response.text()).slice(0, 240)}`)
+  if (!response.ok) {
+    const errorText = await response.text()
+    const normalized = errorText.toLowerCase()
+    if (
+      response.status === 400 && (
+        normalized.includes('billing_hard_limit_reached') ||
+        normalized.includes('billing hard limit') ||
+        normalized.includes('insufficient_quota') ||
+        normalized.includes('billing_limit_user_error')
+      )
+    ) {
+      throw new Error('CREDITS_EXHAUSTED')
+    }
+    throw new Error(`OpenAI error ${response.status}: ${errorText.slice(0, 240)}`)
+  }
   const result = await response.json()
   if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json }
   throw new Error('OpenAI returned no image')
@@ -370,6 +384,7 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
   const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
     { name: userKeyType === 'gemini' ? 'Gemini Direct (Your Key)' : 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage, userKeyType === 'gemini' ? userEnhancementKey : null) },
     { name: userKeyType === 'openai' ? 'OpenAI (Your Key)' : 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage, userKeyType === 'openai' ? userEnhancementKey : null) },
+    { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
     { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]

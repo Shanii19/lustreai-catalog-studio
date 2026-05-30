@@ -91,6 +91,11 @@ function summarizeProviderErrors(errors: string[]): string {
   return Array.from(deduped.entries()).map(([provider, message]) => `${provider}: ${message}`).join('; ')
 }
 
+function shouldFallbackToSourceImage(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return message.includes('all providers failed')
+}
+
 async function fetchImageAsBase64(imageUrl: string): Promise<SourceImage> {
   const resp = await fetch(imageUrl)
   if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`)
@@ -202,7 +207,21 @@ async function enhanceWithOpenAI(sourceImage: SourceImage, overrideKey?: string 
   })
   if (response.status === 429) throw new Error('RATE_LIMITED')
   if (response.status === 402 || response.status === 403) throw new Error('CREDITS_EXHAUSTED')
-  if (!response.ok) throw new Error(`OpenAI error ${response.status}: ${(await response.text()).slice(0, 240)}`)
+  if (!response.ok) {
+    const errorText = await response.text()
+    const normalized = errorText.toLowerCase()
+    if (
+      response.status === 400 && (
+        normalized.includes('billing_hard_limit_reached') ||
+        normalized.includes('billing hard limit') ||
+        normalized.includes('insufficient_quota') ||
+        normalized.includes('billing_limit_user_error')
+      )
+    ) {
+      throw new Error('CREDITS_EXHAUSTED')
+    }
+    throw new Error(`OpenAI error ${response.status}: ${errorText.slice(0, 240)}`)
+  }
   const result = await response.json()
   if (result.data?.[0]?.b64_json) return { image_base64: result.data[0].b64_json }
   throw new Error('OpenAI returned no image')
@@ -370,6 +389,8 @@ async function enhanceWithFallback(sourceImage: SourceImage, userId: string): Pr
   const providers: { name: string; fn: () => Promise<{ image_base64: string }> }[] = [
     { name: userKeyType === 'gemini' ? 'Gemini Direct (Your Key)' : 'Gemini Direct', fn: () => enhanceWithGemini(sourceImage, userKeyType === 'gemini' ? userEnhancementKey : null) },
     { name: userKeyType === 'openai' ? 'OpenAI (Your Key)' : 'OpenAI', fn: () => enhanceWithOpenAI(sourceImage, userKeyType === 'openai' ? userEnhancementKey : null) },
+    { name: 'Ideogram', fn: () => enhanceWithIdeogram(sourceImage) },
+    { name: 'Flux', fn: () => enhanceWithFlux(sourceImage.base64) },
     { name: 'Stability AI', fn: () => enhanceWithStability(sourceImage) },
     { name: 'Lovable AI', fn: () => enhanceWithLovable(sourceImage) },
   ]
@@ -426,6 +447,7 @@ async function enhanceWithRetry(sourceImage: SourceImage, userId: string, retrie
 
 async function processEnhancement(jobId: string, imageUrl: string, projectId: string, imageId: string, userId: string) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  let sourceImage: SourceImage | null = null
 
   // Safety timeout: mark job failed if processing takes too long (edge functions have ~150s limit)
   const safetyTimer = setTimeout(async () => {
@@ -437,7 +459,7 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
 
   try {
     await supabase.from('processing_jobs').update({ progress: 30 }).eq('id', jobId)
-    const sourceImage = await fetchImageAsBase64(imageUrl)
+    sourceImage = await fetchImageAsBase64(imageUrl)
     const result = await enhanceWithRetry(sourceImage, userId)
     await supabase.from('processing_jobs').update({ progress: 70 }).eq('id', jobId)
 
@@ -457,6 +479,37 @@ async function processEnhancement(jobId: string, imageUrl: string, projectId: st
     await supabase.rpc('increment_usage', { p_user_id: userId, p_field: 'images_enhanced' })
   } catch (error) {
     console.error('Enhancement failed:', error)
+    if (sourceImage && shouldFallbackToSourceImage(error)) {
+      try {
+        console.warn('Falling back to source image so the pipeline can continue')
+        const storagePath = `${userId}/${projectId}/enhanced/enhanced_${imageId}.png`
+        const uploadBlob = base64ToBlob(sourceImage.base64, sourceImage.mimeType)
+        const { error: storageError } = await supabase.storage
+          .from('project-images')
+          .upload(storagePath, uploadBlob, { upsert: true, contentType: sourceImage.mimeType })
+        if (storageError) throw new Error(`Storage upload failed: ${storageError.message}`)
+
+        const { data: publicUrlData } = supabase.storage.from('project-images').getPublicUrl(storagePath)
+        await supabase.from('project_images').insert({
+          project_id: projectId,
+          storage_url: publicUrlData.publicUrl,
+          type: 'enhanced',
+          metadata: {
+            original_image_id: imageId,
+            fallback_mode: 'source_passthrough',
+            fallback_reason: error instanceof Error ? error.message : 'Unknown error',
+          },
+        })
+        await supabase.from('processing_jobs').update({
+          status: 'complete',
+          progress: 100,
+          error_message: 'source_passthrough',
+        }).eq('id', jobId)
+        return
+      } catch (fallbackError) {
+        console.error('Enhancement fallback failed:', fallbackError)
+      }
+    }
     await supabase.from('processing_jobs').update({
       status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown error',
     }).eq('id', jobId)

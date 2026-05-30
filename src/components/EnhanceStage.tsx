@@ -18,12 +18,23 @@ interface Props {
   onRetry?: (imageId: string) => void;
 }
 
+function isFallbackComplete(errorMessage?: string | null): boolean {
+  if (!errorMessage) return false;
+  return errorMessage.toLowerCase().includes('source_passthrough');
+}
+
 const RATE_LIMIT_COOLDOWN = 60; // seconds
 
 function isRateLimited(errorMessage?: string | null): boolean {
   if (!errorMessage) return false;
   const lower = errorMessage.toLowerCase();
   return lower.includes('rate_limited') || lower.includes('rate limit') || lower.includes('429');
+}
+
+function isCreditsExhausted(errorMessage?: string | null): boolean {
+  if (!errorMessage) return false;
+  const lower = errorMessage.toLowerCase();
+  return lower.includes('credits_exhausted') || lower.includes('billing hard limit') || lower.includes('billing_hard_limit_reached') || lower.includes('insufficient_quota');
 }
 
 function CooldownTimer({ seconds, onComplete, onRetry, imageId }: { seconds: number; onComplete: () => void; onRetry?: (id: string) => void; imageId: string }) {
@@ -100,9 +111,10 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
         failed: job.status === "failed",
         progress: job.progress,
         errorMessage: job.error_message,
+        fallback: isFallbackComplete(job.error_message),
       };
     }
-    return { done: mockEnhanced.has(imageId), failed: false, progress: mockEnhanced.has(imageId) ? 100 : 0 };
+    return { done: mockEnhanced.has(imageId), failed: false, progress: mockEnhanced.has(imageId) ? 100 : 0, fallback: false };
   };
 
   const handleCooldownComplete = useCallback((imageId: string) => {
@@ -142,6 +154,7 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
         {images.map((img) => {
           const status = getStatus(img.id);
           const rateLimited = status.failed && isRateLimited(status.errorMessage);
+          const creditsExhausted = status.failed && isCreditsExhausted(status.errorMessage);
           const inCooldown = cooldowns.has(img.id);
 
           return (
@@ -175,7 +188,9 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                         <div className="flex flex-col items-center gap-2 text-center px-4">
                           <AlertCircle className="h-8 w-8 text-destructive" />
                           <span className="text-sm text-destructive">
-                            {rateLimited
+                            {creditsExhausted
+                              ? "Enhancement provider credits are exhausted. Update an active enhancement key or restore provider credits, then retry."
+                              : rateLimited
                               ? "All providers are rate limited. Waiting for cooldown…"
                               : (status.errorMessage || "Enhancement failed")}
                           </span>
@@ -194,8 +209,13 @@ const EnhanceStage = ({ images, onComplete, jobs, onRetry }: Props) => {
                   )
                 ) : status.done ? (
                   <>
-                    <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400">Enhanced ✓</Badge>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400">
+                      {status.fallback ? "Ready ✓" : "Enhanced ✓"}
+                    </Badge>
                     <img src={img.url} alt={`Enhanced ${img.name}`} className="w-full rounded-lg object-cover max-h-64 brightness-110 contrast-105 saturate-110" />
+                    {status.fallback && (
+                      <p className="text-xs text-muted-foreground">External enhancement was unavailable, so this image will continue with the cleaned source version.</p>
+                    )}
                   </>
                 ) : (
                   <>
